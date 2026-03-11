@@ -1,0 +1,18 @@
+[package]
+name = "bogita-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bogita-core.workspace = true
+age.workspace = true
+zeroize.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
