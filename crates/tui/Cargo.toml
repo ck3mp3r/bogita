@@ -1,0 +1,25 @@
+[package]
+name = "bogita-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "bogita-tui"
+path = "src/main.rs"
+
+[dependencies]
+bogita-core.workspace = true
+bogita-storage.workspace = true
+bogita-crypto.workspace = true
+bogita-sync.workspace = true
+
+[features]
+default = ["git"]
+git = ["bogita-sync/git"]

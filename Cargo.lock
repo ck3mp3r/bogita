@@ -152,6 +152,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bogita-cli"
+version = "0.1.0"
+dependencies = [
+ "bogita-core",
+ "bogita-crypto",
+ "bogita-storage",
+ "bogita-sync",
+]
+
+[[package]]
 name = "bogita-core"
 version = "0.1.0"
 dependencies = [
@@ -191,6 +201,16 @@ dependencies = [
  "git2",
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "bogita-tui"
+version = "0.1.0"
+dependencies = [
+ "bogita-core",
+ "bogita-crypto",
+ "bogita-storage",
+ "bogita-sync",
 ]
 
 [[package]]
