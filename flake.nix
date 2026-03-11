@@ -37,17 +37,20 @@
 
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
         cargoLock = {lockFile = ./Cargo.lock;};
-      in {
-        apps = {
-          default = {
-            type = "app";
-            program = "${config.packages.default}/bin/bogita";
-          };
-        };
 
-        packages = {
-          default = pkgs.hello; # Placeholder until workspace is ready
+        # Import packaging logic
+        packaging = import ./nix/packaging.nix {
+          inherit
+            inputs
+            system
+            pkgs
+            cargoToml
+            cargoLock
+            overlays
+            ;
         };
+      in {
+        inherit (packaging) apps packages;
 
         devShells = {
           # Main development shell with all tools
