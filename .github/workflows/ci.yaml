@@ -1,0 +1,26 @@
+---
+name: CI
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - "**/*.nix"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "flake.lock"
+      - "flake.nix"
+      - "crates/**"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v6
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Run tests in Nix CI shell
+        run: nix develop .#ci --command cargo test --workspace

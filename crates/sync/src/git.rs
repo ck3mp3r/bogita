@@ -1,0 +1,1 @@
+//! Git sync backend implementation

@@ -1,0 +1,45 @@
+.laio.yaml
+.DS_Store
+result*
+.direnv
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# IDE/Editor files
+# RustRover / IntelliJ IDEA
+.idea/
+*.iml
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Vim
+*.swp
+*.swo
+
+# Emacs
+\#*\#
+.\#*
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Linux
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Backup files
+*.bak
+*.orig
+
+# Local environment overrides
+.env.local

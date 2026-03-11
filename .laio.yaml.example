@@ -1,0 +1,27 @@
+---
+name: bogita
+
+path: .
+
+pane_cmd_delay: 500
+
+windows:
+  - name: code
+    flex_direction: row
+    panes:
+      - name: Editor
+        flex: 2
+        commands:
+          - command: ^$env.EDITOR
+      - name: Opencode
+        flex: 1
+        commands:
+          - command: ^opencode
+            args:
+              - --port
+
+  - name: misc
+    flex_direction: row
+    panes:
+      - flex: 1
+      - flex: 1

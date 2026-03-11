@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/storage",
+    "crates/crypto",
+    "crates/sync",
+    "crates/cli",
+    "crates/tui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Christian Kemper <christian.kemper@kemper.buzz>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ck3mp3r/bogita"
+homepage = "https://github.com/ck3mp3r/bogita"
+keywords = ["password-manager", "security", "encryption", "ssh-agent", "vault"]
+categories = ["command-line-utilities", "cryptography", "authentication"]
+
+[profile.release]
+opt-level = "z"       # Optimize for size
+lto = true            # Enable Link Time Optimization
+codegen-units = 1     # Single codegen unit for better optimization
+panic = "abort"       # Abort on panic (smaller binary)
+strip = true          # Strip symbols from binary
+
+[profile.release-with-debug]
+inherits = "release"
+strip = false
+debug = true
+
+[workspace.dependencies]
+# Internal crates - Phase 1 only (core + storage + crypto + sync)
+bogita-core = { path = "crates/core" }
+bogita-storage = { path = "crates/storage" }
+bogita-crypto = { path = "crates/crypto" }
+bogita-sync = { path = "crates/sync" }
+
+# Security and cryptography
+age = { version = "0.11", default-features = false }
+zeroize = { version = "1.8", features = ["derive"] }
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Storage and sync backends - Phase 1 only (SQLite + Git)
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
+git2 = { version = "0.20", default-features = false }
+
+# Async runtime and utilities
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "time"] }
+thiserror = "2.0"
+miette = { version = "7.6", features = ["fancy"] }
+serde_json = "1.0"
+
+# Additional utilities
+uuid = { version = "1.22", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+[workspace.dependencies.serde]
+version = "1.0"
+
+features = ["derive"]
