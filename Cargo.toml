@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = []
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Christian Kemper <christian.kemper@kember.buzz>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ck3mp3r/bogita"
+
+[profile.release]
+opt-level = "z"       # Optimize for size
+lto = true            # Enable Link Time Optimization
+codegen-units = 1     # Single codegen unit for better optimization
+panic = "abort"       # Abort on panic (smaller binary)
+strip = true          # Strip symbols from binary
