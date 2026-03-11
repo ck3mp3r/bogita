@@ -157,7 +157,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -168,7 +168,7 @@ dependencies = [
  "age",
  "bogita-core",
  "secrecy",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "zeroize",
 ]
 
@@ -179,7 +179,7 @@ dependencies = [
  "bogita-core",
  "serde",
  "sqlx",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -190,7 +190,7 @@ dependencies = [
  "bogita-core",
  "git2",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
