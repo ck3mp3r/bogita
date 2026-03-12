@@ -26,3 +26,6 @@ zeroize.workspace = true
 # Utilities
 uuid.workspace = true
 chrono.workspace = true
+
+# Async
+async-trait.workspace = true
