@@ -165,10 +165,14 @@ dependencies = [
 name = "bogita-core"
 version = "0.1.0"
 dependencies = [
+ "age",
  "chrono",
+ "secrecy",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
