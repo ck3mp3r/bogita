@@ -298,6 +298,7 @@ pub struct GitConfig {
 
     /// Remote URL (e.g., "git@github.com:user/vault.git")
     pub remote: String,
+    // Note: Git always uses age encryption (untrusted storage)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -307,6 +308,15 @@ pub struct AwsConfig {
 
     /// Secret name prefix (e.g., "team-backend/")
     pub prefix: String,
+
+    /// Enable double encryption (age + AWS KMS)
+    ///
+    /// When false (default): Store plaintext, AWS encrypts with KMS
+    /// When true: Age-encrypt before storing, AWS encrypts the encrypted blob
+    ///
+    /// Use true for zero-trust scenarios where you don't trust the cloud provider
+    #[serde(default)]
+    pub double_encrypt: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -316,6 +326,15 @@ pub struct GcpConfig {
 
     /// Secret name prefix
     pub prefix: String,
+
+    /// Enable double encryption (age + GCP envelope encryption)
+    ///
+    /// When false (default): Store plaintext, GCP encrypts automatically
+    /// When true: Age-encrypt before storing, GCP encrypts the encrypted blob
+    ///
+    /// Use true for zero-trust scenarios where you don't trust the cloud provider
+    #[serde(default)]
+    pub double_encrypt: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
