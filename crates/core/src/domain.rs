@@ -7,6 +7,7 @@ use std::str::FromStr;
 // Re-export types from dependencies for convenience
 pub use age::x25519;
 pub use secrecy::{ExposeSecret, SecretString};
+pub use uuid::Uuid;
 
 /// Wrapper around age::x25519::Recipient (public key)
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,11 +94,11 @@ impl FromStr for AgeIdentity {
 /// A vault entry containing encrypted credential data
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Entry {
-    /// Unique identifier (auto-increment from SQLite)
-    pub id: i64,
+    /// Unique identifier (UUID v4 for sync-friendly IDs)
+    pub id: Uuid,
 
     /// Vault this entry belongs to
-    pub vault_id: i64,
+    pub vault_id: Uuid,
 
     /// Entry name/title (unique per vault)
     pub name: String,
@@ -255,8 +256,8 @@ pub struct NoteData {
 /// Vault configuration and metadata
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vault {
-    /// Unique identifier
-    pub id: i64,
+    /// Unique identifier (UUID v4 for sync-friendly IDs)
+    pub id: Uuid,
 
     /// Vault name (unique)
     pub name: String,
@@ -331,10 +332,10 @@ pub struct SqliteConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Change {
     /// Entry ID that changed
-    pub entry_id: i64,
+    pub entry_id: Uuid,
 
     /// Vault ID
-    pub vault_id: i64,
+    pub vault_id: Uuid,
 
     /// Type of operation
     pub operation: Operation,
@@ -357,39 +358,11 @@ pub enum Operation {
     Delete,
 }
 
-/// Represents a sync conflict between local and remote
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Conflict {
-    /// Entry ID with conflict
-    pub entry_id: i64,
-
-    /// Local operation
-    pub local_op: Operation,
-
-    /// Remote operation
-    pub remote_op: Operation,
-
-    /// Local timestamp
-    pub local_timestamp: chrono::DateTime<chrono::Utc>,
-
-    /// Remote timestamp
-    pub remote_timestamp: chrono::DateTime<chrono::Utc>,
-
-    /// Local encrypted data
-    pub local_data: Vec<u8>,
-
-    /// Remote encrypted data
-    pub remote_data: Vec<u8>,
-}
-
 /// Result of a push operation
 #[derive(Clone, Debug)]
 pub struct PushResult {
     /// Number of changes pushed
     pub changes_pushed: usize,
-
-    /// Any conflicts encountered
-    pub conflicts: Vec<Conflict>,
 }
 
 /// Metadata about a sync target
