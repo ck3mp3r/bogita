@@ -1,5 +1,10 @@
 //! Domain models and types
 
+pub mod preset;
+
+#[cfg(test)]
+mod preset_test;
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
