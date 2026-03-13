@@ -97,6 +97,22 @@ where
                 .map_err(|e| Error::Database(DbError::Query(e.to_string())))?)
         }
     }
+
+    /// Insert a minimal vault row for use in tests (bypasses FK constraints)
+    #[cfg(test)]
+    pub async fn seed_vault_for_test(&self, vault_id: uuid::Uuid) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO vaults (id, name, is_default, created_at, backend_type, backend_config, recipients, auto_sync)
+             VALUES (?, ?, 0, ?, 'sqlite', '{}', '[]', 0)",
+        )
+        .bind(vault_id.to_string())
+        .bind(vault_id.to_string()) // use id as name to keep it unique
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]

@@ -149,7 +149,7 @@ pub struct Field {
 }
 
 /// Typed field values
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum FieldValue {
     /// Plain text value
