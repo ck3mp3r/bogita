@@ -3,7 +3,10 @@
 //! TDD: RED → GREEN → REFACTOR
 
 use crate::crypto::age::AgeCrypto;
-use crate::domain::{AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue};
+use crate::domain::{
+    AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault,
+    VaultBackend,
+};
 use crate::ports::Storage;
 use crate::storage::sqlite::SqliteStorage;
 use uuid::Uuid;
@@ -347,4 +350,147 @@ async fn test_search_does_not_match_encrypted_fields() {
         .expect("search failed");
 
     assert_eq!(results.len(), 0, "encrypted fields must not be searchable");
+}
+
+// ============================================================================
+// Vault CRUD tests
+// ============================================================================
+
+fn make_vault(name: &str, is_default: bool) -> Vault {
+    let identity = AgeIdentity::generate();
+    let recipient = identity.to_recipient();
+    Vault {
+        id: Uuid::new_v4(),
+        name: name.to_string(),
+        is_default,
+        created_at: chrono::Utc::now().timestamp(),
+        backend: VaultBackend::Sqlite(SqliteConfig {
+            path: ":memory:".to_string(),
+        }),
+        recipients: vec![recipient],
+        lock_timeout: Some(300),
+        auto_sync: false,
+    }
+}
+
+#[tokio::test]
+async fn test_save_and_get_vault() {
+    let storage = create_test_storage().await;
+    let vault = make_vault("personal", true);
+
+    storage
+        .save_vault(&vault)
+        .await
+        .expect("save_vault should succeed");
+
+    let retrieved = storage
+        .get_vault(vault.id)
+        .await
+        .expect("get_vault should not error")
+        .expect("vault should exist");
+
+    assert_eq!(retrieved.id, vault.id);
+    assert_eq!(retrieved.name, "personal");
+    assert!(retrieved.is_default);
+    assert_eq!(retrieved.lock_timeout, Some(300));
+    assert!(!retrieved.auto_sync);
+    assert_eq!(retrieved.recipients.len(), 1);
+}
+
+#[tokio::test]
+async fn test_get_nonexistent_vault_returns_none() {
+    let storage = create_test_storage().await;
+
+    let result = storage
+        .get_vault(Uuid::new_v4())
+        .await
+        .expect("get_vault should not error");
+
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn test_list_vaults() {
+    let storage = create_test_storage().await;
+    let v1 = make_vault("vault-a", true);
+    let v2 = make_vault("vault-b", false);
+    let v3 = make_vault("vault-c", false);
+
+    storage.save_vault(&v1).await.expect("save failed");
+    storage.save_vault(&v2).await.expect("save failed");
+    storage.save_vault(&v3).await.expect("save failed");
+
+    let vaults = storage
+        .list_vaults()
+        .await
+        .expect("list_vaults should succeed");
+    assert_eq!(vaults.len(), 3);
+
+    let names: Vec<&str> = vaults.iter().map(|v| v.name.as_str()).collect();
+    assert!(names.contains(&"vault-a"));
+    assert!(names.contains(&"vault-b"));
+    assert!(names.contains(&"vault-c"));
+}
+
+#[tokio::test]
+async fn test_delete_vault() {
+    let storage = create_test_storage().await;
+    let vault = make_vault("to-delete", false);
+
+    storage.save_vault(&vault).await.expect("save failed");
+    storage
+        .delete_vault(vault.id)
+        .await
+        .expect("delete_vault should succeed");
+
+    let result = storage
+        .get_vault(vault.id)
+        .await
+        .expect("get_vault should not error");
+
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn test_save_vault_updates_existing() {
+    let storage = create_test_storage().await;
+    let vault_id = Uuid::new_v4();
+
+    let original = Vault {
+        id: vault_id,
+        name: "original-name".to_string(),
+        is_default: false,
+        created_at: chrono::Utc::now().timestamp(),
+        backend: VaultBackend::Sqlite(SqliteConfig {
+            path: ":memory:".to_string(),
+        }),
+        recipients: vec![],
+        lock_timeout: None,
+        auto_sync: false,
+    };
+    storage
+        .save_vault(&original)
+        .await
+        .expect("initial save failed");
+
+    let updated = Vault {
+        id: vault_id,
+        name: "updated-name".to_string(),
+        is_default: true,
+        lock_timeout: Some(600),
+        auto_sync: true,
+        ..original
+    };
+    storage.save_vault(&updated).await.expect("update failed");
+
+    let retrieved = storage
+        .get_vault(vault_id)
+        .await
+        .expect("get failed")
+        .expect("should exist");
+
+    assert_eq!(retrieved.name, "updated-name");
+    assert!(retrieved.is_default);
+    assert_eq!(retrieved.lock_timeout, Some(600));
+    assert!(retrieved.auto_sync);
 }

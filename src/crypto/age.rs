@@ -11,6 +11,7 @@ use crate::ports::Crypto;
 use std::io::{Read, Write};
 
 /// Age encryption adapter (zero-sized type for zero-cost abstraction)
+#[derive(Clone, Copy)]
 pub struct AgeCrypto;
 
 impl AgeCrypto {

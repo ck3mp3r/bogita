@@ -2,7 +2,9 @@
 //!
 //! Implements the Storage port trait using SQLite with field-level encryption.
 
-use crate::domain::{AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue};
+use crate::domain::{
+    AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, Vault, VaultBackend,
+};
 use crate::error::{DbError, Error, Result};
 use crate::ports::{Crypto, Storage};
 use base64::{engine::general_purpose, Engine as _};
@@ -115,11 +117,132 @@ where
     }
 }
 
+/// Convert a SQLite row into a `Vault` domain type.
+fn row_to_vault(row: sqlx::sqlite::SqliteRow) -> Result<Vault> {
+    use crate::domain::AgeRecipient;
+
+    let id: String = row.get("id");
+    let name: String = row.get("name");
+    let is_default: bool = row.get("is_default");
+    let created_at: i64 = row.get("created_at");
+    let backend_config: String = row.get("backend_config");
+    let recipients_json: String = row.get("recipients");
+    let lock_timeout: Option<i64> = row.get("lock_timeout");
+    let auto_sync: bool = row.get("auto_sync");
+
+    let id = uuid::Uuid::parse_str(&id).map_err(|_| DbError::CorruptedData)?;
+    let backend: VaultBackend = serde_json::from_str(&backend_config)
+        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
+    let recipients: Vec<AgeRecipient> = serde_json::from_str(&recipients_json)
+        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
+
+    Ok(Vault {
+        id,
+        name,
+        is_default,
+        created_at,
+        backend,
+        recipients,
+        lock_timeout: lock_timeout.map(|t| t as u64),
+        auto_sync,
+    })
+}
+
 #[async_trait::async_trait]
 impl<C> Storage for SqliteStorage<C>
 where
     C: Crypto + Send + Sync,
 {
+    async fn save_vault(&self, vault: &Vault) -> Result<()> {
+        let backend_type = match &vault.backend {
+            VaultBackend::Git(_) => "git",
+            VaultBackend::Aws(_) => "aws",
+            VaultBackend::Gcp(_) => "gcp",
+            VaultBackend::Sqlite(_) => "sqlite",
+        };
+        let backend_config = serde_json::to_string(&vault.backend)
+            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
+        let recipients = serde_json::to_string(&vault.recipients)
+            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO vaults (id, name, is_default, created_at, backend_type, backend_config, recipients, lock_timeout, auto_sync)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(id) DO UPDATE SET
+                name         = excluded.name,
+                is_default   = excluded.is_default,
+                backend_type = excluded.backend_type,
+                backend_config = excluded.backend_config,
+                recipients   = excluded.recipients,
+                lock_timeout = excluded.lock_timeout,
+                auto_sync    = excluded.auto_sync
+            "#,
+        )
+        .bind(vault.id.to_string())
+        .bind(&vault.name)
+        .bind(vault.is_default)
+        .bind(vault.created_at)
+        .bind(backend_type)
+        .bind(backend_config)
+        .bind(recipients)
+        .bind(vault.lock_timeout.map(|t| t as i64))
+        .bind(vault.auto_sync)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
+
+        Ok(())
+    }
+
+    async fn get_vault(&self, id: uuid::Uuid) -> Result<Option<Vault>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
+            FROM vaults
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(row_to_vault(r)?)),
+        }
+    }
+
+    async fn list_vaults(&self) -> Result<Vec<Vault>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
+            FROM vaults
+            ORDER BY name
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        rows.into_iter().map(row_to_vault).collect()
+    }
+
+    async fn delete_vault(&self, id: uuid::Uuid) -> Result<()> {
+        let result = sqlx::query("DELETE FROM vaults WHERE id = ?1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(DbError::VaultNotFound(id).into());
+        }
+
+        Ok(())
+    }
+
     async fn save_entry(&self, entry: &Entry, recipients: &[AgeRecipient]) -> Result<()> {
         let mut tx = self
             .pool
