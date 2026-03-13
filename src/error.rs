@@ -24,6 +24,10 @@ pub enum Error {
     #[error("validation error: {0}")]
     Validation(#[from] ValidationError),
 
+    /// Config errors
+    #[error("config error: {0}")]
+    Config(#[from] ConfigError),
+
     /// I/O errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -78,6 +82,18 @@ pub enum SyncError {
 
     #[error("authentication failed")]
     AuthenticationFailed,
+}
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("config file not found")]
+    NotFound,
+
+    #[error("config parse failed: {0}")]
+    ParseFailed(String),
+
+    #[error("config write failed: {0}")]
+    WriteFailed(String),
 }
 
 #[derive(Debug, Error)]

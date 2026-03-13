@@ -64,6 +64,12 @@ impl<'de> Deserialize<'de> for AgeRecipient {
 #[derive(Clone)]
 pub struct AgeIdentity(x25519::Identity);
 
+impl fmt::Debug for AgeIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("AgeIdentity").field(&"<redacted>").finish()
+    }
+}
+
 impl AgeIdentity {
     pub fn generate() -> Self {
         Self(x25519::Identity::generate())

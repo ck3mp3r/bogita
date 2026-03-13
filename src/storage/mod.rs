@@ -3,10 +3,16 @@
 //! This crate implements the Storage port trait using SQLite.
 
 pub mod config;
+pub mod identity;
 pub mod sqlite;
 
+#[cfg(test)]
+mod config_test;
+#[cfg(test)]
+mod identity_test;
 #[cfg(test)]
 mod sqlite_test;
 
 // Re-export for convenience
-pub use config::{default_config_dir, default_data_dir, default_db_path};
+pub use config::{default_config_dir, default_data_dir, vault_db_path, AppConfig};
+pub use identity::{read_identity, write_identity};
