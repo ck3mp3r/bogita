@@ -88,10 +88,10 @@ impl FromStr for AgeIdentity {
 }
 
 // ============================================================================
-// Entry and Entry Types
+// Entry and Field Types
 // ============================================================================
 
-/// A vault entry containing encrypted credential data
+/// A vault entry containing fields with granular encryption control
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Entry {
     /// Unique identifier (UUID v4 for sync-friendly IDs)
@@ -112,11 +112,8 @@ pub struct Entry {
     /// Last modification timestamp
     pub modified_at: i64,
 
-    /// age-encrypted payload (JSON serialized EntryData)
-    pub encrypted_data: Vec<u8>,
-
-    /// Cleartext metadata for search/filtering
-    pub metadata: EntryMetadata,
+    /// Key-value fields with encryption control
+    pub fields: Vec<Field>,
 }
 
 /// Entry type discriminator
@@ -129,124 +126,85 @@ pub enum EntryType {
     Note,
 }
 
-/// Cleartext metadata (NOT encrypted)
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct EntryMetadata {
-    /// URL/website (e.g., "https://github.com")
-    pub url: Option<String>,
-
-    /// Username/email
-    pub username: Option<String>,
-
-    /// Plaintext notes
-    pub notes: Option<String>,
-
-    /// Favorite flag for quick access
-    pub favorite: bool,
-}
-
-// ============================================================================
-// Encrypted Entry Data
-// ============================================================================
-
-/// Decrypted entry data (enum for type-specific fields)
-/// This is what gets JSON-serialized and then age-encrypted
-/// Note: Secret<T> already handles zeroization
+/// A field in an entry with typed value and encryption control
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum EntryData {
-    Password(PasswordData),
-    Otp(OtpData),
-    SshKey(SshKeyData),
-    Note(NoteData),
+pub struct Field {
+    /// Unique identifier for the field
+    pub id: Uuid,
+
+    /// Field key/name
+    pub key: String,
+
+    /// Field value (typed)
+    pub value: FieldValue,
+
+    /// Field type (semantic meaning)
+    pub field_type: FieldType,
+
+    /// Whether this field's value is encrypted in storage
+    pub encrypted: bool,
+
+    /// Display order index
+    pub idx: i32,
 }
 
-/// Password entry data
-/// Note: Passwords should be zeroized in memory when used in the application layer
+/// Typed field values
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PasswordData {
-    /// The actual password
-    pub password: String,
+#[serde(tag = "type", content = "data")]
+pub enum FieldValue {
+    /// Plain text value
+    Text(String),
 
-    /// Optional password history (previous passwords)
-    pub history: Vec<PasswordHistoryEntry>,
+    /// Hidden text (passwords, secrets - visually obscured)
+    Hidden(String),
+
+    /// Boolean value
+    Boolean(bool),
+
+    /// Integer value
+    Number(i64),
+
+    /// URL value
+    Url(String),
+
+    /// Email address
+    Email(String),
+
+    /// Date/time (Unix timestamp)
+    Date(i64),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PasswordHistoryEntry {
-    pub password: String, // Old passwords, less sensitive
-    pub changed_at: i64,  // When it was changed
-}
-
-/// OTP/TOTP entry data
-/// Note: Secrets should be zeroized in memory when used in the application layer
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OtpData {
-    /// Base32-encoded secret key
-    pub secret: String,
-
-    /// Algorithm (default: SHA1 for compatibility)
-    #[serde(default = "default_otp_algorithm")]
-    pub algorithm: OtpAlgorithm,
-
-    /// Number of digits (6 or 8, default: 6)
-    #[serde(default = "default_otp_digits")]
-    pub digits: u8,
-
-    /// Period in seconds (default: 30)
-    #[serde(default = "default_otp_period")]
-    pub period: u64,
-
-    /// Issuer (e.g., "GitHub")
-    pub issuer: Option<String>,
-
-    /// Account name (e.g., "user@example.com")
-    pub account: Option<String>,
-}
-
+/// Field type for semantic meaning
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum OtpAlgorithm {
-    SHA1,
-    SHA256,
-    SHA512,
-}
+#[serde(rename_all = "snake_case")]
+pub enum FieldType {
+    // Common fields
+    Username,
+    Password,
+    Url,
+    Notes,
+    Tags,
+    Favorite,
 
-pub fn default_otp_algorithm() -> OtpAlgorithm {
-    OtpAlgorithm::SHA1
-}
+    // OTP/TOTP fields
+    TotpSecret,
+    TotpAlgorithm,
+    TotpDigits,
+    TotpPeriod,
+    TotpIssuer,
+    TotpAccount,
 
-pub fn default_otp_digits() -> u8 {
-    6
-}
+    // SSH key fields
+    SshPrivateKey,
+    SshPublicKey,
+    SshKeyType,
+    SshComment,
 
-pub fn default_otp_period() -> u64 {
-    30
-}
+    // Password history (stored as JSON array in Text)
+    PasswordHistory,
 
-/// SSH key entry data
-/// Note: Private keys should be zeroized in memory when used in the application layer
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SshKeyData {
-    /// Private key (OpenSSH or PEM format)
-    pub private_key: String,
-
-    /// Public key (derived or stored)
-    pub public_key: String,
-
-    /// Key type (e.g., "ssh-ed25519", "ssh-rsa")
-    pub key_type: String,
-
-    /// Comment/label
-    pub comment: Option<String>,
-}
-
-/// Note entry data
-/// Note: Content should be zeroized in memory when used in the application layer
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NoteData {
-    /// Secure note content
-    pub content: String,
+    // Custom user-defined field
+    Custom(String),
 }
 
 // ============================================================================
@@ -362,11 +320,8 @@ pub struct Change {
     /// When the change occurred
     pub timestamp: chrono::DateTime<chrono::Utc>,
 
-    /// Encrypted entry data (full entry after change)
-    pub encrypted_data: Vec<u8>,
-
-    /// Entry metadata (cleartext)
-    pub metadata: EntryMetadata,
+    /// Full entry with all fields (some may be encrypted)
+    pub entry: Entry,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
