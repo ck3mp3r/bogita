@@ -29,6 +29,9 @@ pub trait Storage: Send + Sync {
     /// List all persisted vaults.
     async fn list_vaults(&self) -> Result<Vec<Vault>>;
 
+    /// Return the vault marked `is_default = true`, or `None` if none is set.
+    async fn default_vault(&self) -> Result<Option<Vault>>;
+
     /// Delete a vault by ID.
     ///
     /// Returns error if the vault doesn't exist.
@@ -83,6 +86,9 @@ impl<S: Storage> Storage for &S {
     }
     async fn list_vaults(&self) -> Result<Vec<Vault>> {
         (**self).list_vaults().await
+    }
+    async fn default_vault(&self) -> Result<Option<Vault>> {
+        (**self).default_vault().await
     }
     async fn delete_vault(&self, id: Uuid) -> Result<()> {
         (**self).delete_vault(id).await

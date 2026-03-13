@@ -39,6 +39,11 @@ where
         self.storage.list_vaults().await
     }
 
+    /// Return the vault marked as default, or `None` if none is set.
+    pub async fn default_vault(&self) -> Result<Option<Vault>> {
+        self.storage.default_vault().await
+    }
+
     /// Remove a vault by ID.
     pub async fn remove_vault(&self, id: Uuid) -> Result<()> {
         self.storage.delete_vault(id).await

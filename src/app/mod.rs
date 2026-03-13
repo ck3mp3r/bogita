@@ -3,7 +3,7 @@
 use crate::crypto::age::AgeCrypto;
 use crate::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
 use crate::error::{ConfigError, Error, Result};
-use crate::storage::config::{default_data_dir, AppConfig};
+use crate::storage::config::AppConfig;
 use crate::storage::identity::{read_identity, write_identity};
 use crate::storage::sqlite::SqliteStorage;
 use crate::vault::registry::VaultRegistry;
@@ -14,9 +14,6 @@ use uuid::Uuid;
 mod init_test;
 
 /// Fully-bootstrapped application state.
-///
-/// Constructed via `App::init()` — either by running first-run setup or
-/// by loading existing config and identity from disk.
 pub struct App {
     pub config: AppConfig,
     pub identity: AgeIdentity,
@@ -30,12 +27,12 @@ impl App {
     /// 1. Generate a fresh age identity and write it to disk.
     /// 2. Create a default "Personal" vault backed by SQLite.
     /// 3. Persist the vault via `VaultRegistry`.
-    /// 4. Write `config.toml` with the identity path and default vault id.
+    /// 4. Write `config.toml` with defaults (so the user can customise paths).
     ///
     /// On subsequent runs:
     /// 1. Load `config.toml`.
-    /// 2. Read the identity from disk.
-    /// 3. Open the default vault's SQLite storage.
+    /// 2. Resolve effective paths (overrides or XDG defaults).
+    /// 3. Read the identity and open storage.
     pub async fn init() -> Result<Self> {
         let config_path = AppConfig::default_path();
 
@@ -47,9 +44,11 @@ impl App {
     }
 
     async fn first_run(config_path: &std::path::Path) -> Result<Self> {
+        let config = AppConfig::default();
+
         // 1. Generate identity and persist it
         let identity = AgeIdentity::generate();
-        let identity_path = AppConfig::default_identity_path();
+        let identity_path = config.effective_identity_path();
         write_identity(&identity, &identity_path)?;
 
         // 2. Derive recipient from the identity
@@ -57,7 +56,7 @@ impl App {
 
         // 3. Build the default "Personal" vault
         let vault_id = Uuid::new_v4();
-        let db_path = default_data_dir().join(format!("{}.db", vault_id));
+        let db_path = config.effective_db_path();
         let vault = Vault {
             id: vault_id,
             name: "Personal".to_string(),
@@ -77,11 +76,7 @@ impl App {
         let registry = VaultRegistry::new(storage, AgeCrypto);
         registry.add_vault(&vault).await?;
 
-        // 5. Write config
-        let config = AppConfig {
-            identity_path,
-            default_vault_id: Some(vault_id),
-        };
+        // 5. Write config so user can customise paths if desired
         config.save(config_path)?;
 
         Ok(Self {
@@ -92,16 +87,10 @@ impl App {
     }
 
     async fn load_existing(config: AppConfig) -> Result<Self> {
-        // Load identity from the path recorded in config
-        let identity = read_identity(&config.identity_path)?;
+        let identity_path = config.effective_identity_path();
+        let identity = read_identity(&identity_path)?;
 
-        // Determine the default vault's db path
-        let vault_id = config
-            .default_vault_id
-            .ok_or_else(|| ConfigError::ParseFailed("no default_vault_id in config".to_string()))?;
-
-        let db_path = default_data_dir().join(format!("{}.db", vault_id));
-
+        let db_path = config.effective_db_path();
         let crypto = AgeCrypto;
         let storage = SqliteStorage::new(&db_path, crypto).await?;
         let registry = VaultRegistry::new(storage, AgeCrypto);

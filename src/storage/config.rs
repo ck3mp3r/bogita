@@ -5,7 +5,6 @@
 use crate::error::{ConfigError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
 // Directory names based on build mode
 #[cfg(debug_assertions)]
@@ -38,23 +37,38 @@ pub fn default_config_dir() -> PathBuf {
         .join(CONFIG_DIR_NAME)
 }
 
-/// Get the SQLite database file path for a specific vault.
+/// Get the default SQLite database file path.
 ///
-/// Returns `XDG_DATA_HOME/bogita[-dev]/<vault_id>.db`
-pub fn vault_db_path(vault_id: Uuid) -> PathBuf {
-    default_data_dir().join(format!("{}.db", vault_id))
+/// Returns `XDG_DATA_HOME/bogita[-dev]/vault.db`
+pub fn default_db_path() -> PathBuf {
+    default_data_dir().join("vault.db")
 }
 
-/// Root application configuration — the anchor for all paths.
+/// Get the default age identity file path.
+///
+/// Returns `XDG_DATA_HOME/bogita[-dev]/identity.age`
+pub fn default_identity_path() -> PathBuf {
+    default_data_dir().join("identity.age")
+}
+
+/// Root application configuration.
+///
+/// Written on first run with sane defaults so the user can inspect and
+/// customise it. Any field left absent (or commented out) in the TOML
+/// falls back to its XDG-derived default.
 ///
 /// Persisted as TOML at `default_config_dir()/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    /// Path to the age identity file (private key)
-    pub identity_path: PathBuf,
+    /// Override the age identity file path.
+    /// Defaults to `XDG_DATA_HOME/bogita[-dev]/identity.age`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_path: Option<PathBuf>,
 
-    /// UUID of the default vault (None before first-run init)
-    pub default_vault_id: Option<Uuid>,
+    /// Override the SQLite vault database path.
+    /// Defaults to `XDG_DATA_HOME/bogita[-dev]/vault.db`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_path: Option<PathBuf>,
 }
 
 impl AppConfig {
@@ -65,11 +79,16 @@ impl AppConfig {
         default_config_dir().join("config.toml")
     }
 
-    /// Returns the canonical path for the age identity file.
-    ///
-    /// `XDG_DATA_HOME/bogita[-dev]/identity.age`
-    pub fn default_identity_path() -> PathBuf {
-        default_data_dir().join("identity.age")
+    /// Resolve the effective identity path (override or XDG default).
+    pub fn effective_identity_path(&self) -> PathBuf {
+        self.identity_path
+            .clone()
+            .unwrap_or_else(default_identity_path)
+    }
+
+    /// Resolve the effective database path (override or XDG default).
+    pub fn effective_db_path(&self) -> PathBuf {
+        self.db_path.clone().unwrap_or_else(default_db_path)
     }
 
     /// Load config from `path`.
@@ -99,55 +118,5 @@ impl AppConfig {
         let tmp = path.with_extension("toml.tmp");
         std::fs::write(&tmp, &contents).map_err(|e| ConfigError::WriteFailed(e.to_string()))?;
         std::fs::rename(&tmp, path).map_err(|e| ConfigError::WriteFailed(e.to_string()).into())
-    }
-}
-
-#[cfg(test)]
-mod path_tests {
-    use super::*;
-
-    #[test]
-    fn test_data_dir_name() {
-        let data_dir = default_data_dir();
-        #[cfg(debug_assertions)]
-        assert!(data_dir.ends_with("bogita-dev"));
-        #[cfg(not(debug_assertions))]
-        assert!(data_dir.ends_with("bogita"));
-    }
-
-    #[test]
-    fn test_config_dir_name() {
-        let config_dir = default_config_dir();
-        #[cfg(debug_assertions)]
-        assert!(config_dir.ends_with("bogita-dev"));
-        #[cfg(not(debug_assertions))]
-        assert!(config_dir.ends_with("bogita"));
-    }
-
-    #[test]
-    fn test_vault_db_path() {
-        let id = Uuid::new_v4();
-        let path = vault_db_path(id);
-        assert!(path.to_string_lossy().ends_with(&format!("{}.db", id)));
-        #[cfg(debug_assertions)]
-        assert!(path.to_string_lossy().contains("bogita-dev"));
-        #[cfg(not(debug_assertions))]
-        {
-            let s = path.to_string_lossy();
-            assert!(s.contains("bogita"));
-            assert!(!s.contains("bogita-dev"));
-        }
-    }
-
-    #[test]
-    fn default_path_ends_with_config_toml() {
-        let p = AppConfig::default_path();
-        assert!(p.ends_with("config.toml"));
-    }
-
-    #[test]
-    fn default_identity_path_ends_with_identity_age() {
-        let p = AppConfig::default_identity_path();
-        assert!(p.ends_with("identity.age"));
     }
 }

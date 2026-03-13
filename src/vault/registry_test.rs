@@ -103,6 +103,43 @@ async fn test_set_default_clears_previous_default() {
 }
 
 #[tokio::test]
+async fn test_default_vault_returns_is_default_vault() {
+    let registry = create_registry().await;
+
+    registry
+        .add_vault(&make_vault("work", false))
+        .await
+        .expect("add failed");
+    let personal = make_vault("personal", true);
+    registry.add_vault(&personal).await.expect("add failed");
+
+    let default = registry
+        .default_vault()
+        .await
+        .expect("default_vault failed")
+        .expect("should have a default vault");
+
+    assert_eq!(default.id, personal.id);
+    assert!(default.is_default);
+}
+
+#[tokio::test]
+async fn test_default_vault_returns_none_when_none_set() {
+    let registry = create_registry().await;
+
+    registry
+        .add_vault(&make_vault("work", false))
+        .await
+        .expect("add failed");
+
+    let default = registry
+        .default_vault()
+        .await
+        .expect("default_vault failed");
+    assert!(default.is_none());
+}
+
+#[tokio::test]
 async fn test_vault_service_for_can_add_entry() {
     use crate::domain::{Entry, EntryType, Field, FieldType, FieldValue};
 

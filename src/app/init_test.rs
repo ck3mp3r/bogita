@@ -25,10 +25,9 @@ async fn first_run_creates_config_identity_and_personal_vault() {
         "config.toml should exist"
     );
     assert!(
-        app.config.identity_path.exists(),
+        app.config.effective_identity_path().exists(),
         "identity.age should exist"
     );
-    assert!(app.config.default_vault_id.is_some());
 
     let vaults = app.registry.list_vaults().await.unwrap();
     assert_eq!(vaults.len(), 1);
@@ -72,8 +71,8 @@ async fn personal_vault_is_default_and_sqlite_backed() {
 
     if let VaultBackend::Sqlite(cfg) = &vault.backend {
         assert!(
-            cfg.path.contains(&vault.id.to_string()),
-            "db path should contain vault id, got: {}",
+            cfg.path.ends_with("vault.db"),
+            "db path should end with vault.db, got: {}",
             cfg.path
         );
     }

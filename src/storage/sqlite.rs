@@ -229,6 +229,25 @@ where
         rows.into_iter().map(row_to_vault).collect()
     }
 
+    async fn default_vault(&self) -> Result<Option<Vault>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
+            FROM vaults
+            WHERE is_default = 1
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(row_to_vault(r)?)),
+        }
+    }
+
     async fn delete_vault(&self, id: uuid::Uuid) -> Result<()> {
         let result = sqlx::query("DELETE FROM vaults WHERE id = ?1")
             .bind(id.to_string())
