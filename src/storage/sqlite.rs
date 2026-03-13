@@ -316,27 +316,47 @@ where
     async fn list_entries(
         &self,
         vault_id: uuid::Uuid,
+        query: Option<&str>,
         identity: &AgeIdentity,
     ) -> Result<Vec<Entry>> {
-        // Get all entries for vault
-        let entry_rows = sqlx::query(
-            r#"
-            SELECT id
-            FROM entries
-            WHERE vault_id = ?1
-            ORDER BY name
-            "#,
-        )
-        .bind(vault_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
+        let entry_rows = match query {
+            None => sqlx::query(
+                r#"
+                    SELECT id
+                    FROM entries
+                    WHERE vault_id = ?1
+                    ORDER BY name
+                    "#,
+            )
+            .bind(vault_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?,
+            Some(q) => {
+                let search_pattern = format!("%{}%", q);
+                sqlx::query(
+                    r#"
+                    SELECT DISTINCT e.id
+                    FROM entries e
+                    JOIN entry_fields f ON f.entry_id = e.id
+                    WHERE e.vault_id = ?1
+                      AND f.encrypted = 0
+                      AND (f.key LIKE ?2 OR f.value LIKE ?2 OR e.name LIKE ?2)
+                    ORDER BY e.name
+                    "#,
+                )
+                .bind(vault_id.to_string())
+                .bind(&search_pattern)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DbError::Query(e.to_string()))?
+            }
+        };
 
         let mut entries = Vec::new();
         for row in entry_rows {
             let id: String = row.get("id");
             let entry_id = uuid::Uuid::parse_str(&id).map_err(|_| DbError::CorruptedData)?;
-
             if let Some(entry) = self.get_entry(entry_id, identity).await? {
                 entries.push(entry);
             }
@@ -357,44 +377,5 @@ where
         }
 
         Ok(())
-    }
-
-    async fn search_entries(
-        &self,
-        vault_id: uuid::Uuid,
-        query: &str,
-        identity: &AgeIdentity,
-    ) -> Result<Vec<Entry>> {
-        // Search in plaintext fields only
-        let search_pattern = format!("%{}%", query);
-
-        let entry_rows = sqlx::query(
-            r#"
-            SELECT DISTINCT e.id
-            FROM entries e
-            JOIN entry_fields f ON f.entry_id = e.id
-            WHERE e.vault_id = ?1
-              AND f.encrypted = 0
-              AND (f.key LIKE ?2 OR f.value LIKE ?2 OR e.name LIKE ?2)
-            ORDER BY e.name
-            "#,
-        )
-        .bind(vault_id.to_string())
-        .bind(&search_pattern)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
-
-        let mut entries = Vec::new();
-        for row in entry_rows {
-            let id: String = row.get("id");
-            let entry_id = uuid::Uuid::parse_str(&id).map_err(|_| DbError::CorruptedData)?;
-
-            if let Some(entry) = self.get_entry(entry_id, identity).await? {
-                entries.push(entry);
-            }
-        }
-
-        Ok(entries)
     }
 }

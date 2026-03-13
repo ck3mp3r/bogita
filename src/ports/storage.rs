@@ -32,13 +32,16 @@ pub trait Storage: Send + Sync {
         identity: &crate::domain::AgeIdentity,
     ) -> Result<Option<Entry>>;
 
-    /// List all entries in a vault
+    /// List all entries in a vault, with optional search filter
     ///
     /// Returns entries matching the given vault_id.
+    /// When query is Some, filters to entries where any plaintext field contains the query.
+    /// When query is None, returns all entries.
     /// Identity is used to decrypt fields marked as encrypted.
     async fn list_entries(
         &self,
         vault_id: Uuid,
+        query: Option<&str>,
         identity: &crate::domain::AgeIdentity,
     ) -> Result<Vec<Entry>>;
 
@@ -46,16 +49,4 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns error if entry doesn't exist.
     async fn delete_entry(&self, id: Uuid) -> Result<()>;
-
-    /// Search entries by metadata
-    ///
-    /// Searches across plaintext fields only (encrypted fields are not searchable).
-    /// Returns entries where any plaintext field contains the query string.
-    /// Identity is used to decrypt fields marked as encrypted in results.
-    async fn search_entries(
-        &self,
-        vault_id: Uuid,
-        query: &str,
-        identity: &crate::domain::AgeIdentity,
-    ) -> Result<Vec<Entry>>;
 }

@@ -172,7 +172,7 @@ async fn test_list_entries_scoped_to_vault() {
         .expect("save failed");
 
     let entries = storage
-        .list_entries(vault_id, &identity)
+        .list_entries(vault_id, None, &identity)
         .await
         .expect("list should succeed");
 
@@ -313,7 +313,7 @@ async fn test_search_finds_plaintext_fields() {
         .expect("save failed");
 
     let results = storage
-        .search_entries(vault_id, "octocat", &identity)
+        .list_entries(vault_id, Some("octocat"), &identity)
         .await
         .expect("search failed");
 
@@ -342,7 +342,7 @@ async fn test_search_does_not_match_encrypted_fields() {
         .expect("save failed");
 
     let results = storage
-        .search_entries(vault_id, "invisible", &identity)
+        .list_entries(vault_id, Some("invisible"), &identity)
         .await
         .expect("search failed");
 
