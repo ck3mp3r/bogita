@@ -5,9 +5,9 @@
 //! Note: The age API requires `&dyn Recipient` and `&dyn Identity` trait references
 //! in iterators. We use stack references (not Box<dyn>) to minimize heap allocations.
 
-use bogita_core::domain::{AgeIdentity, AgeRecipient};
-use bogita_core::error::{CryptoError, Result};
-use bogita_core::ports::Crypto;
+use crate::domain::{AgeIdentity, AgeRecipient};
+use crate::error::{CryptoError, Result};
+use crate::ports::Crypto;
 use std::io::{Read, Write};
 
 /// Age encryption adapter (zero-sized type for zero-cost abstraction)

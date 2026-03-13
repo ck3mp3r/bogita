@@ -40,7 +40,16 @@ pub enum DbError {
     #[error("duplicate entry name: {0}")]
     DuplicateName(String),
 
-    #[error("database error: {0}")]
+    #[error("database connection failed: {0}")]
+    ConnectionFailed(String),
+
+    #[error("database migration failed: {0}")]
+    MigrationFailed(String),
+
+    #[error("corrupted data in database")]
+    CorruptedData,
+
+    #[error("database query error: {0}")]
     Query(String),
 }
 

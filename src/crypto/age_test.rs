@@ -1,7 +1,7 @@
 //! Tests for Age crypto implementation
 
 use super::*;
-use bogita_core::domain::AgeIdentity;
+use crate::domain::AgeIdentity;
 
 #[test]
 fn test_age_crypto_creation() {

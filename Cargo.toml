@@ -1,15 +1,5 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/core",
-    "crates/storage",
-    "crates/crypto",
-    "crates/sync",
-    "crates/cli",
-    "crates/tui",
-]
-
-[workspace.package]
+[package]
+name = "bogita"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
@@ -19,6 +9,48 @@ repository = "https://github.com/ck3mp3r/bogita"
 homepage = "https://github.com/ck3mp3r/bogita"
 keywords = ["password-manager", "security", "encryption", "ssh-agent", "vault"]
 categories = ["command-line-utilities", "cryptography", "authentication"]
+
+[features]
+default = ["sqlite", "git"]
+sqlite = ["dep:sqlx"]
+git = ["dep:git2"]
+# aws = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
+# gcp = ["dep:google-cloud-secretmanager"]
+
+[dependencies]
+# Security and cryptography
+age = { version = "0.11", default-features = false }
+zeroize = { version = "1.8", features = ["derive"] }
+secrecy = { version = "0.10", features = ["serde"] }
+base64 = "0.22"
+
+# Storage (optional)
+sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "sqlite", "migrate"] }
+
+# Sync backends (optional)
+git2 = { version = "0.20", optional = true, default-features = false }
+# aws-sdk-secretsmanager = { version = "1.0", optional = true }
+# aws-config = { version = "1.0", optional = true }
+# google-cloud-secretmanager = { version = "0.5", optional = true }
+
+# Async runtime
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs"] }
+async-trait = "0.1"
+
+# Error handling
+thiserror = "2.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.22", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+
+[dev-dependencies]
+serde_json = "1.0"
 
 [profile.release]
 opt-level = "z"       # Optimize for size
@@ -31,35 +63,3 @@ strip = true          # Strip symbols from binary
 inherits = "release"
 strip = false
 debug = true
-
-[workspace.dependencies]
-# Internal crates - Phase 1 only (core + storage + crypto + sync)
-bogita-core = { path = "crates/core" }
-bogita-storage = { path = "crates/storage" }
-bogita-crypto = { path = "crates/crypto" }
-bogita-sync = { path = "crates/sync" }
-
-# Security and cryptography
-age = { version = "0.11", default-features = false }
-zeroize = { version = "1.8", features = ["derive"] }
-secrecy = { version = "0.10", features = ["serde"] }
-
-# Storage and sync backends - Phase 1 only (SQLite + Git)
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
-git2 = { version = "0.20", default-features = false }
-
-# Async runtime and utilities
-tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "time"] }
-async-trait = "0.1"
-thiserror = "2.0"
-miette = { version = "7.6", features = ["fancy"] }
-serde_json = "1.0"
-
-# Additional utilities
-uuid = { version = "1.22", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-dirs = "5.0"
-[workspace.dependencies.serde]
-version = "1.0"
-
-features = ["derive"]
