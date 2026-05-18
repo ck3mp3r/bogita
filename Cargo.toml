@@ -28,7 +28,7 @@ base64 = "0.22"
 sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "sqlite", "migrate"] }
 
 # Sync backends (optional)
-git2 = { version = "0.20", optional = true, default-features = false }
+git2 = { version = "0.21", optional = true, default-features = false }
 # aws-sdk-secretsmanager = { version = "1.0", optional = true }
 # aws-config = { version = "1.0", optional = true }
 # google-cloud-secretmanager = { version = "0.5", optional = true }
@@ -43,12 +43,12 @@ thiserror = "2.0"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1.1"
 
 # Utilities
 uuid = { version = "1.22", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "5.0"
+dirs = "6.0"
 
 [dev-dependencies]
 serde_json = "1.0"
