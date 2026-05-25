@@ -59,7 +59,7 @@ jobs:
           ref: release/${{ needs.prep-release.outputs.version }}
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+        uses: DeterminateSystems/nix-installer-action@v22
 
       - name: Build archive for ${{ matrix.nix_system }}
         run: nix build .#archive --print-build-logs
@@ -85,7 +85,7 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: token
         with:
           app-id: ${{ secrets.BOT_ID }}
