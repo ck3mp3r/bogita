@@ -19,7 +19,7 @@ jobs:
       version: ${{ steps.prep.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.ref }}
@@ -54,12 +54,12 @@ jobs:
             nix_system: aarch64-linux
     steps:
       - name: Checkout release branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: release/${{ needs.prep-release.outputs.version }}
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v21
+        uses: DeterminateSystems/nix-installer-action@v22
 
       - name: Build archive for ${{ matrix.nix_system }}
         run: nix build .#archive --print-build-logs
@@ -85,14 +85,14 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: token
         with:
           app-id: ${{ secrets.BOT_ID }}
           private-key: ${{ secrets.BOT }}
 
       - name: Checkout release branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: release/${{ needs.prep-release.outputs.version }}
           fetch-depth: 0
