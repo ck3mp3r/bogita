@@ -1,5 +1,5 @@
-use bogita_core::app::App;
 use bogita_cli::args::{AgentCommands, Cli, Commands, EntryCommands, VaultCommands};
+use bogita_core::app::App;
 use bogita_tui::app::Tui;
 use bogita_tui::context::TuiContext;
 use clap::Parser;

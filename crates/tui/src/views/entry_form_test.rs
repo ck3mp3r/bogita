@@ -1,5 +1,5 @@
-use bogita_core::domain::{FieldType, FieldValue};
 use crate::views::entry_form::{EntryForm, FormAction, FormFieldType, FormMode};
+use bogita_core::domain::{FieldType, FieldValue};
 use ratatui::crossterm::event::KeyCode;
 
 fn add_form() -> EntryForm {

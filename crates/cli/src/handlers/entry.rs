@@ -20,7 +20,8 @@ pub enum EntryOutput {
 async fn resolve_vault(
     vault_name: &Option<String>,
     registry: &VaultRegistry<SqliteStorage<AgeCrypto>, AgeCrypto>,
-) -> Result<bogita_core::domain::Vault> {    match vault_name {
+) -> Result<bogita_core::domain::Vault> {
+    match vault_name {
         Some(name) => {
             let vaults = registry.list_vaults().await?;
             vaults
@@ -118,7 +119,8 @@ pub async fn handle_search(
 }
 
 /// Compute the current TOTP code from a TotpSecret field and sibling TOTP fields.
-fn compute_totp(entry: &Entry, secret_field: &bogita_core::domain::Field) -> Result<String> {    let secret = field_value_to_string(&secret_field.value);
+fn compute_totp(entry: &Entry, secret_field: &bogita_core::domain::Field) -> Result<String> {
+    let secret = field_value_to_string(&secret_field.value);
 
     let period = entry
         .fields

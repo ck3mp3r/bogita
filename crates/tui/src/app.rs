@@ -1,13 +1,13 @@
 //! TUI application — event loop and rendering.
 
-use bogita_core::app::App;
-use bogita_core::domain::Entry;
-use bogita_core::error::Result;
-use bogita_core::service::clipboard::{ArboardBackend, ClipboardService};
 use crate::context::TuiContext;
 use crate::views::entry_form::{EntryForm, FormAction, FormMode};
 use crate::views::main_view::{MainView, MainViewAction};
 use crate::views::password_gen_view::{PasswordGenAction, PasswordGenView};
+use bogita_core::app::App;
+use bogita_core::domain::Entry;
+use bogita_core::error::Result;
+use bogita_core::service::clipboard::{ArboardBackend, ClipboardService};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -96,11 +96,13 @@ impl Tui {
     ///
     /// Loads all vaults and their entries from the registry so `MainView`
     /// starts with real data rather than empty lists.
-    pub async fn new(app: App, context: TuiContext) -> bogita_core::error::Result<Self> {        // Load vaults
+    pub async fn new(app: App, context: TuiContext) -> bogita_core::error::Result<Self> {
+        // Load vaults
         let vaults = app.registry.list_vaults().await?;
 
         // Load entries from every vault
-        let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();        for vault in &vaults {
+        let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
+        for vault in &vaults {
             let svc = app.registry.vault_service_for(vault, app.identity.clone());
             let entries = svc.list_entries(vault.id, None).await?;
             all_entries.extend(entries);
@@ -250,7 +252,8 @@ impl Tui {
                 if self.main_view.is_leader_mode() {
                     "[a] add  [e] edit  [d] delete  [Esc] cancel".to_string()
                 } else {
-                    use crate::views::main_view::Column;                    if self.main_view.focused == Column::Detail {
+                    use crate::views::main_view::Column;
+                    if self.main_view.focused == Column::Detail {
                         "[j/k] scroll  [s] reveal  [c] copy  [Tab] columns  [Space] actions  [q] quit".to_string()
                     } else {
                         "[/] search  [Space] actions  [j/k] scroll  [Tab] focus  [q] quit"
@@ -510,7 +513,8 @@ impl Tui {
                 }
 
                 // Reload and re-select the saved entry
-                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();                for vault in &vaults {
+                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
+                for vault in &vaults {
                     let svc = self
                         .app
                         .registry
@@ -532,7 +536,8 @@ impl Tui {
                 }
 
                 // Reload after delete — reset to index 0
-                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();                for vault in &vaults {
+                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
+                for vault in &vaults {
                     let svc = self
                         .app
                         .registry

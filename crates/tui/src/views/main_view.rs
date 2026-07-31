@@ -323,7 +323,8 @@ impl MainView {
     }
 
     /// Replace the entry list (e.g. after add/edit/delete) and reset selection.
-    pub fn reload_entries(&mut self, entries: Vec<bogita_core::domain::Entry>) {        self.entries = entries;
+    pub fn reload_entries(&mut self, entries: Vec<bogita_core::domain::Entry>) {
+        self.entries = entries;
         self.reset_entry_selection();
     }
 
@@ -331,7 +332,8 @@ impl MainView {
     /// Falls back to index 0 if the id is not found or `select_id` is `None`.
     pub fn reload_entries_select(
         &mut self,
-        entries: Vec<bogita_core::domain::Entry>,        select_id: Option<uuid::Uuid>,
+        entries: Vec<bogita_core::domain::Entry>,
+        select_id: Option<uuid::Uuid>,
     ) {
         self.entries = entries;
         self.detail_field = 0;
