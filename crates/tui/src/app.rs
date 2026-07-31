@@ -50,6 +50,12 @@ enum ActiveView {
     },
     /// Vault creation form.
     VaultForm(VaultForm),
+    /// Delete vault confirmation modal overlay.
+    ConfirmDeleteVault {
+        vault_id: Uuid,
+        /// Vault name shown in the prompt.
+        name: String,
+    },
 }
 
 /// A deferred async action set by [`Tui::handle_key`] and drained by
@@ -72,6 +78,10 @@ enum AppAction {
     /// Save a new vault.
     SaveVault {
         vault: bogita_core::domain::Vault,
+    },
+    /// Delete a vault.
+    DeleteVault {
+        vault_id: Uuid,
     },
 }
 
@@ -209,6 +219,11 @@ impl Tui {
                 gen.render(frame, body_area);
             }
             ActiveView::VaultForm(f) => f.render(frame, col3),
+            ActiveView::ConfirmDeleteVault { name, .. } => {
+                self.main_view
+                    .render_detail(frame, col3, self.detail_entry.as_ref());
+                render_confirm_delete_vault_modal(frame, body_area, name);
+            }
         }
 
         // Error overlay: rendered on top of everything else.
@@ -230,6 +245,9 @@ impl Tui {
         }
         match &self.active {
             ActiveView::ConfirmDelete { .. } => "[y] confirm delete  [n / Esc] cancel".to_string(),
+            ActiveView::ConfirmDeleteVault { .. } => {
+                "[y] confirm delete vault  [n / Esc] cancel".to_string()
+            }
             ActiveView::ConfirmSave { .. } => {
                 "[y] save  [n] discard  [Esc] back to form".to_string()
             }
@@ -259,7 +277,18 @@ impl Tui {
             }
             ActiveView::Main => {
                 if self.main_view.is_leader_mode() {
-                    "[a] add  [e] edit  [d] delete  [Esc] cancel".to_string()
+                    use crate::views::main_view::Column;
+                    match self.main_view.focused {
+                        Column::Vaults => {
+                            "[a] add vault  [d] delete vault  [Esc] cancel".to_string()
+                        }
+                        Column::Entries => {
+                            "[a] add  [e] edit  [d] delete  [Esc] cancel".to_string()
+                        }
+                        Column::Detail => {
+                            "[Esc] cancel".to_string()
+                        }
+                    }
                 } else {
                     use crate::views::main_view::Column;
                     if self.main_view.focused == Column::Detail {
@@ -342,6 +371,19 @@ impl Tui {
                                 entry_id: e.id,
                                 vault_id: e.vault_id,
                                 name: e.name.clone(),
+                            };
+                        }
+                    }
+                    MainViewAction::OpenAddVault => {
+                        self.active = ActiveView::VaultForm(VaultForm::new(String::new()));
+                    }
+                    MainViewAction::DeleteVault { vault_id } => {
+                        // Find vault name for the confirm modal
+                        let vaults = self.main_view.vaults_snapshot();
+                        if let Some(vault) = vaults.iter().find(|v| v.id == vault_id) {
+                            self.active = ActiveView::ConfirmDeleteVault {
+                                vault_id,
+                                name: vault.name.clone(),
                             };
                         }
                     }
@@ -452,6 +494,16 @@ impl Tui {
                         entry_id: *entry_id,
                         vault_id: *vault_id,
                     });
+                    self.active = ActiveView::Main;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.active = ActiveView::Main;
+                }
+                _ => {}
+            },
+            ActiveView::ConfirmDeleteVault { vault_id, .. } => match key {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.pending = Some(AppAction::DeleteVault { vault_id: *vault_id });
                     self.active = ActiveView::Main;
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -606,6 +658,23 @@ impl Tui {
                 self.main_view.reload_vaults(vaults);
                 self.main_view.reload_entries(all_entries);
             }
+            AppAction::DeleteVault { vault_id } => {
+                self.app.registry.remove_vault(vault_id).await?;
+                // Reload vaults and entries
+                let vaults = self.app.registry.list_vaults().await?;
+                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
+                for v in &vaults {
+                    let svc = self
+                        .app
+                        .registry
+                        .vault_service_for(v, self.app.identity.clone());
+                    let entries = svc.list_entries(v.id, None).await?;
+                    all_entries.extend(entries);
+                }
+                self.main_view.reload_vaults(vaults);
+                self.main_view.reload_entries(all_entries);
+                self.detail_entry = None;
+            }
         }
 
         Ok(())
@@ -716,6 +785,51 @@ fn render_confirm_delete_modal(frame: &mut Frame, area: Rect, entry_name: &str) 
         Span::raw("  Delete "),
         Span::styled(
             entry_name,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("?"),
+    ]);
+    frame.render_widget(Paragraph::new(name_line), rows[0]);
+
+    let hint = Paragraph::new("  [y] confirm  [n / Esc] cancel")
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hint, rows[1]);
+}
+
+/// Render a small centered confirmation modal for deleting a vault.
+fn render_confirm_delete_vault_modal(frame: &mut Frame, area: Rect, vault_name: &str) {
+    let modal_w = 44u16.min(area.width);
+    let modal_h = 5u16.min(area.height);
+    let x = area.x + area.width.saturating_sub(modal_w) / 2;
+    let y = area.y + area.height.saturating_sub(modal_h) / 2;
+    let modal_area = Rect::new(x, y, modal_w, modal_h);
+
+    frame.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" Delete vault ");
+
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(inner);
+
+    let name_line = Line::from(vec![
+        Span::raw("  Delete vault "),
+        Span::styled(
+            vault_name,
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),

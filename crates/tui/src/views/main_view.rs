@@ -44,6 +44,12 @@ pub enum MainViewAction {
         entry_id: uuid::Uuid,
         vault_id: uuid::Uuid,
     },
+    /// Open the vault creation form.
+    OpenAddVault,
+    /// Delete the selected vault.
+    DeleteVault {
+        vault_id: uuid::Uuid,
+    },
 }
 
 // ── Column focus ──────────────────────────────────────────────────────────────
@@ -136,6 +142,11 @@ impl MainView {
         self.vaults.len()
     }
 
+    /// Return a snapshot of all vaults (for use by the parent Tui).
+    pub fn vaults_snapshot(&self) -> Vec<bogita_core::domain::Vault> {
+        self.vaults.clone()
+    }
+
     /// Whether the Space leader key has been pressed and we're awaiting an action key.
     pub fn is_leader_mode(&self) -> bool {
         self.leader_mode
@@ -149,6 +160,17 @@ impl MainView {
     /// The current search query string (always lowercase).
     pub fn search_query(&self) -> &str {
         &self.search_query
+    }
+
+    /// The vault currently selected in Col 1, if any.
+    /// Returns `None` if "All Vaults" (index 0) is selected or no vaults exist.
+    pub fn selected_vault_id(&self) -> Option<uuid::Uuid> {
+        let idx = self.vault_state.selected()?;
+        // Index 0 is "All Vaults" — no specific vault selected
+        if idx == 0 {
+            return None;
+        }
+        self.vaults.get(idx - 1).map(|v| v.id)
     }
 
     /// The entry currently selected in Col 2, if any.
@@ -218,8 +240,17 @@ impl MainView {
         // Leader mode: Space was previously pressed — dispatch or cancel.
         if self.leader_mode {
             self.leader_mode = false;
-            return match key {
-                KeyCode::Char('a') => {
+            return match (&self.focused, key) {
+                // Vaults column: a = add vault, d = delete vault
+                (Column::Vaults, KeyCode::Char('a')) => MainViewAction::OpenAddVault,
+                (Column::Vaults, KeyCode::Char('d')) => {
+                    match self.selected_vault_id() {
+                        Some(id) => MainViewAction::DeleteVault { vault_id: id },
+                        None => MainViewAction::None,
+                    }
+                }
+                // Entries column: a = add entry, e = edit entry, d = delete entry
+                (Column::Entries, KeyCode::Char('a')) => {
                     let vault_id = match self.vault_state.selected() {
                         None | Some(0) => self.vaults.first().map(|v| v.id),
                         Some(idx) => self.vaults.get(idx - 1).map(|v| v.id),
@@ -229,14 +260,15 @@ impl MainView {
                         None => MainViewAction::None,
                     }
                 }
-                KeyCode::Char('e') => match self.selected_entry() {
+                (Column::Entries, KeyCode::Char('e')) => match self.selected_entry() {
                     Some(e) => MainViewAction::OpenEditForm { entry_id: e.id },
                     None => MainViewAction::None,
                 },
-                KeyCode::Char('d') => match self.selected_entry() {
+                (Column::Entries, KeyCode::Char('d')) => match self.selected_entry() {
                     Some(e) => MainViewAction::DeleteEntry { entry_id: e.id },
                     None => MainViewAction::None,
                 },
+                // Detail column: no leader actions (c and s work directly without leader)
                 // Esc or any unrecognised key cancels leader mode silently.
                 _ => MainViewAction::None,
             };
@@ -436,52 +468,87 @@ impl MainView {
     }
 
     pub fn render_leader_overlay(&self, frame: &mut Frame, area: Rect) {
-        // A small centred popup: 3 lines tall, 32 cols wide.
+        // Determine height and content based on focused column
+        let (h, lines): (u16, Vec<Line>) = match self.focused {
+            Column::Vaults => {
+                let lines = vec![
+                    Line::from(vec![
+                        Span::styled(
+                            " [a] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Add vault"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            " [d] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Delete vault"),
+                    ]),
+                ];
+                (4, lines)
+            }
+            Column::Entries => {
+                let lines = vec![
+                    Line::from(vec![
+                        Span::styled(
+                            " [a] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Add entry"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            " [e] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Edit entry"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            " [d] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Delete entry"),
+                    ]),
+                ];
+                (5, lines)
+            }
+            Column::Detail => {
+                let lines = vec![Line::from(Span::styled(
+                    " No actions available ",
+                    Style::default().fg(Color::DarkGray),
+                ))];
+                (3, lines)
+            }
+        };
+
         const W: u16 = 34;
-        const H: u16 = 5;
         let x = area.x + area.width.saturating_sub(W) / 2;
-        let y = area.y + area.height.saturating_sub(H) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
         let popup = Rect {
             x,
             y,
             width: W.min(area.width),
-            height: H.min(area.height),
+            height: h.min(area.height),
         };
         let block = Block::default()
             .title(" Actions ")
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .style(Style::default().fg(Color::Yellow));
-        let text = vec![
-            Line::from(vec![
-                Span::styled(
-                    " [a] ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("Add entry"),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    " [e] ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("Edit entry"),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    " [d] ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("Delete entry"),
-            ]),
-        ];
-        let para = Paragraph::new(text).block(block);
+        let para = Paragraph::new(lines).block(block);
         frame.render_widget(para, popup);
     }
 
