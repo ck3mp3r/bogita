@@ -6,7 +6,7 @@
   system,
 }: let
   fenix = inputs.fenix.packages.${system};
-  
+
   # Minimal stable Rust toolchain for CI
   toolchain = fenix.combine [
     fenix.stable.cargo

@@ -6,7 +6,7 @@
   system,
 }: let
   fenix = inputs.fenix.packages.${system};
-  
+
   # Stable Rust toolchain with essential components
   toolchain = fenix.combine [
     fenix.stable.cargo
@@ -61,7 +61,7 @@
       echo "Tools available:"
       echo "  sqlx       - SQLx CLI for migrations"
       echo "  age        - Encryption tool"
-      echo "  lefthook   - Git hooks manager"
+      echo "  prek       - Git hooks manager"
       echo ""
     }
   '';
@@ -84,15 +84,15 @@ in
       pkgs.git # Git operations
 
       # Git hooks
-      pkgs.lefthook
+      pkgs.prek
     ];
 
     shellHook = ''
       ${helperScripts}
 
-      # Initialize lefthook on shell entry
-      if [ -f lefthook.yml ]; then
-        lefthook install
+      # Initialize prek on shell entry
+      if [ -f prek.toml ]; then
+        prek install -t pre-commit -t pre-push
       fi
 
       # Welcome message

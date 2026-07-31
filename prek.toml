@@ -1,0 +1,51 @@
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-merge-conflict" },
+  { id = "check-toml" },
+  { id = "check-yaml" },
+  { id = "check-json" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  {
+    id = "rustfmt",
+    name = "rustfmt",
+    language = "system",
+    entry = "sh -c 'cargo fmt && git diff --name-only | xargs git add'",
+    types = ["rust"],
+    stages = ["pre-push"],
+    pass_filenames = false,
+  },
+  {
+    id = "clippy",
+    name = "clippy",
+    language = "system",
+    entry = "cargo clippy --all-targets --all-features -- -D warnings",
+    types = ["rust"],
+    stages = ["pre-push"],
+    pass_filenames = false,
+  },
+  {
+    id = "nix-fmt",
+    name = "nix-fmt",
+    language = "system",
+    entry = "nix fmt .",
+    types = ["nix"],
+    stages = ["pre-push"],
+    pass_filenames = false,
+  },
+  {
+    id = "tests",
+    name = "tests",
+    language = "system",
+    entry = "cargo test --all-features",
+    stages = ["pre-push"],
+    always_run = true,
+    pass_filenames = false,
+  },
+]
