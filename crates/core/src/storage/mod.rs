@@ -3,8 +3,11 @@
 //! This crate implements the Storage port trait using SQLite.
 
 pub mod config;
+pub mod entry_store;
 pub mod identity;
+pub mod mapper;
 pub mod sqlite;
+pub mod vault_store;
 
 #[cfg(test)]
 mod config_test;

@@ -2,13 +2,13 @@
 
 use crate::domain::{AgeIdentity, AgeRecipient, Entry};
 use crate::error::Result;
-use crate::ports::{Crypto, Storage};
+use crate::ports::{Crypto, EntryStore};
 use uuid::Uuid;
 
 /// Application service that coordinates storage and crypto via static dispatch.
 pub struct VaultService<S, C>
 where
-    S: Storage,
+    S: EntryStore,
     C: Crypto,
 {
     storage: S,
@@ -20,7 +20,7 @@ where
 
 impl<S, C> VaultService<S, C>
 where
-    S: Storage,
+    S: EntryStore,
     C: Crypto,
 {
     pub fn new(

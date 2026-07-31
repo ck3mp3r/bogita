@@ -1,21 +1,18 @@
-//! Storage port trait
+//! Storage port traits
 //!
-//! Defines the interface for entry storage backends.
+//! Defines the interfaces for entry storage backends, split into
+//! `VaultStore` (vault metadata) and `EntryStore` (entry CRUD).
+//! `Storage` is a supertrait combining both for backward compatibility.
 
 use crate::domain::{AgeIdentity, AgeRecipient, Entry, Uuid, Vault};
 use crate::error::Result;
 use async_trait::async_trait;
 
-/// Storage port for persisting vault entries and vault metadata
+/// Vault metadata storage port.
 ///
-/// This trait defines the interface that all storage adapters must implement.
-/// It follows hexagonal architecture - the core defines the port, adapters implement it.
+/// Defines the interface for persisting and querying vault metadata.
 #[async_trait]
-pub trait Storage: Send + Sync {
-    // -----------------------------------------------------------------------
-    // Vault metadata
-    // -----------------------------------------------------------------------
-
+pub trait VaultStore: Send + Sync {
     /// Persist vault metadata.
     ///
     /// Creates a new vault if the id doesn't exist, updates if it does.
@@ -36,11 +33,13 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns error if the vault doesn't exist.
     async fn delete_vault(&self, id: Uuid) -> Result<()>;
+}
 
-    // -----------------------------------------------------------------------
-    // Entry CRUD
-    // -----------------------------------------------------------------------
-
+/// Entry CRUD storage port.
+///
+/// Defines the interface for persisting and querying entries.
+#[async_trait]
+pub trait EntryStore: Send + Sync {
     /// Save an entry to storage with encryption
     ///
     /// Creates a new entry if id doesn't exist, updates if it does.
@@ -72,12 +71,17 @@ pub trait Storage: Send + Sync {
     async fn delete_entry(&self, id: Uuid) -> Result<()>;
 }
 
-/// Forward all Storage calls through a shared reference.
+/// Combined storage port for backward compatibility.
 ///
-/// This allows `VaultRegistry` to lend `&self.storage` to `VaultService`
-/// without moving or cloning the underlying adapter.
+/// Any type implementing both `VaultStore` and `EntryStore` automatically
+/// implements `Storage`.
+pub trait Storage: VaultStore + EntryStore {}
+
+impl<T: VaultStore + EntryStore> Storage for T {}
+
+/// Forward all VaultStore calls through a shared reference.
 #[async_trait]
-impl<S: Storage> Storage for &S {
+impl<S: VaultStore> VaultStore for &S {
     async fn save_vault(&self, vault: &Vault) -> Result<()> {
         (**self).save_vault(vault).await
     }
@@ -93,6 +97,11 @@ impl<S: Storage> Storage for &S {
     async fn delete_vault(&self, id: Uuid) -> Result<()> {
         (**self).delete_vault(id).await
     }
+}
+
+/// Forward all EntryStore calls through a shared reference.
+#[async_trait]
+impl<S: EntryStore> EntryStore for &S {
     async fn save_entry(&self, entry: &Entry, recipients: &[AgeRecipient]) -> Result<()> {
         (**self).save_entry(entry, recipients).await
     }

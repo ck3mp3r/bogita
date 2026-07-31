@@ -2,15 +2,12 @@
 //!
 //! Implements the Storage port trait using SQLite with field-level encryption.
 
-use crate::domain::{
-    AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, Vault, VaultBackend,
-};
+use crate::domain::{AgeIdentity, AgeRecipient, FieldValue};
 use crate::error::{DbError, Error, Result};
-use crate::ports::{Crypto, Storage};
+use crate::ports::Crypto;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use sqlx::Row;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -20,8 +17,8 @@ pub struct SqliteStorage<C>
 where
     C: Crypto,
 {
-    pool: SqlitePool,
-    crypto: C,
+    pub(crate) pool: SqlitePool,
+    pub(crate) crypto: C,
 }
 
 impl<C> SqliteStorage<C>
@@ -59,7 +56,7 @@ where
     }
 
     /// Encrypt a field value if the field is marked as encrypted
-    fn encrypt_field_value(
+    pub(crate) fn encrypt_field_value(
         &self,
         value: &FieldValue,
         encrypted: bool,
@@ -80,7 +77,7 @@ where
     }
 
     /// Decrypt a field value if the field is marked as encrypted
-    fn decrypt_field_value(
+    pub(crate) fn decrypt_field_value(
         &self,
         value_str: &str,
         encrypted: bool,
@@ -103,7 +100,7 @@ where
 
     /// Insert a minimal vault row for use in tests (bypasses FK constraints)
     #[cfg(test)]
-    pub async fn seed_vault_for_test(&self, vault_id: uuid::Uuid) -> Result<()> {
+    pub(crate) async fn seed_vault_for_test(&self, vault_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
             "INSERT INTO vaults (id, name, is_default, created_at, backend_type, backend_config, recipients, auto_sync)
              VALUES (?, ?, 0, ?, 'sqlite', '{}', '[]', 0)",
@@ -114,411 +111,6 @@ where
         .execute(&self.pool)
         .await
         .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-        Ok(())
-    }
-}
-
-/// Convert a SQLite row into a `Vault` domain type.
-fn row_to_vault(row: sqlx::sqlite::SqliteRow) -> Result<Vault> {
-    use crate::domain::AgeRecipient;
-
-    let id: String = row.get("id");
-    let name: String = row.get("name");
-    let is_default: bool = row.get("is_default");
-    let created_at: i64 = row.get("created_at");
-    let backend_config: String = row.get("backend_config");
-    let recipients_json: String = row.get("recipients");
-    let lock_timeout: Option<i64> = row.get("lock_timeout");
-    let auto_sync: bool = row.get("auto_sync");
-
-    let id = uuid::Uuid::parse_str(&id).map_err(|_| DbError::CorruptedData)?;
-    let backend: VaultBackend = serde_json::from_str(&backend_config)
-        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-    let recipients: Vec<AgeRecipient> = serde_json::from_str(&recipients_json)
-        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-
-    Ok(Vault {
-        id,
-        name,
-        is_default,
-        created_at,
-        backend,
-        recipients,
-        lock_timeout: lock_timeout.map(|t| t as u64),
-        auto_sync,
-    })
-}
-
-#[async_trait::async_trait]
-impl<C> Storage for SqliteStorage<C>
-where
-    C: Crypto + Send + Sync,
-{
-    async fn save_vault(&self, vault: &Vault) -> Result<()> {
-        let backend_type = match &vault.backend {
-            VaultBackend::Git(_) => "git",
-            VaultBackend::Aws(_) => "aws",
-            VaultBackend::Gcp(_) => "gcp",
-            VaultBackend::Sqlite(_) => "sqlite",
-        };
-        let backend_config = serde_json::to_string(&vault.backend)
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-        let recipients = serde_json::to_string(&vault.recipients)
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO vaults (id, name, is_default, created_at, backend_type, backend_config, recipients, lock_timeout, auto_sync)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-            ON CONFLICT(id) DO UPDATE SET
-                name         = excluded.name,
-                is_default   = excluded.is_default,
-                backend_type = excluded.backend_type,
-                backend_config = excluded.backend_config,
-                recipients   = excluded.recipients,
-                lock_timeout = excluded.lock_timeout,
-                auto_sync    = excluded.auto_sync
-            "#,
-        )
-        .bind(vault.id.to_string())
-        .bind(&vault.name)
-        .bind(vault.is_default)
-        .bind(vault.created_at)
-        .bind(backend_type)
-        .bind(backend_config)
-        .bind(recipients)
-        .bind(vault.lock_timeout.map(|t| t as i64))
-        .bind(vault.auto_sync)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-
-        Ok(())
-    }
-
-    async fn get_vault(&self, id: uuid::Uuid) -> Result<Option<Vault>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
-            FROM vaults
-            WHERE id = ?1
-            "#,
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
-
-        match row {
-            None => Ok(None),
-            Some(r) => Ok(Some(row_to_vault(r)?)),
-        }
-    }
-
-    async fn list_vaults(&self) -> Result<Vec<Vault>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
-            FROM vaults
-            ORDER BY name
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
-
-        rows.into_iter().map(row_to_vault).collect()
-    }
-
-    async fn default_vault(&self) -> Result<Option<Vault>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
-            FROM vaults
-            WHERE is_default = 1
-            LIMIT 1
-            "#,
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
-
-        match row {
-            None => Ok(None),
-            Some(r) => Ok(Some(row_to_vault(r)?)),
-        }
-    }
-
-    async fn delete_vault(&self, id: uuid::Uuid) -> Result<()> {
-        let result = sqlx::query("DELETE FROM vaults WHERE id = ?1")
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DbError::Query(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            return Err(DbError::VaultNotFound(id).into());
-        }
-
-        Ok(())
-    }
-
-    async fn save_entry(&self, entry: &Entry, recipients: &[AgeRecipient]) -> Result<()> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-
-        // Insert or replace entry
-        sqlx::query(
-            r#"
-            INSERT INTO entries (id, vault_id, name, entry_type, created_at, modified_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                entry_type = excluded.entry_type,
-                modified_at = excluded.modified_at
-            "#,
-        )
-        .bind(entry.id.to_string())
-        .bind(entry.vault_id.to_string())
-        .bind(&entry.name)
-        .bind(match entry.entry_type {
-            EntryType::Token => "token",
-            EntryType::Otp => "otp",
-            EntryType::SshKey => "ssh_key",
-            EntryType::Note => "note",
-        })
-        .bind(entry.created_at)
-        .bind(entry.modified_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-
-        // Delete old fields for this entry
-        sqlx::query("DELETE FROM entry_fields WHERE entry_id = ?1")
-            .bind(entry.id.to_string())
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-
-        // Insert new fields
-        for field in &entry.fields {
-            let value_str = self.encrypt_field_value(&field.value, field.encrypted, recipients)?;
-
-            let field_type_str = match &field.field_type {
-                FieldType::Username => "username".to_string(),
-                FieldType::Token => "token".to_string(),
-                FieldType::Url => "url".to_string(),
-                FieldType::Notes => "notes".to_string(),
-                FieldType::Tags => "tags".to_string(),
-                FieldType::Favorite => "favorite".to_string(),
-                FieldType::TotpSecret => "totp_secret".to_string(),
-                FieldType::TotpAlgorithm => "totp_algorithm".to_string(),
-                FieldType::TotpDigits => "totp_digits".to_string(),
-                FieldType::TotpPeriod => "totp_period".to_string(),
-                FieldType::TotpIssuer => "totp_issuer".to_string(),
-                FieldType::TotpAccount => "totp_account".to_string(),
-                FieldType::SshPrivateKey => "ssh_private_key".to_string(),
-                FieldType::SshPublicKey => "ssh_public_key".to_string(),
-                FieldType::SshKeyType => "ssh_key_type".to_string(),
-                FieldType::SshComment => "ssh_comment".to_string(),
-                FieldType::PasswordHistory => "password_history".to_string(),
-                FieldType::Custom(name) => format!("custom:{}", name),
-            };
-
-            sqlx::query(
-                r#"
-                INSERT INTO entry_fields (id, entry_id, key, value, field_type, encrypted, idx)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                "#,
-            )
-            .bind(field.id.to_string())
-            .bind(entry.id.to_string())
-            .bind(&field.key)
-            .bind(value_str)
-            .bind(field_type_str)
-            .bind(field.encrypted)
-            .bind(field.idx)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-        }
-
-        tx.commit()
-            .await
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
-        Ok(())
-    }
-
-    async fn get_entry(&self, id: uuid::Uuid, identity: &AgeIdentity) -> Result<Option<Entry>> {
-        // Get entry
-        let entry_row = sqlx::query(
-            r#"
-            SELECT id, vault_id, name, entry_type, created_at, modified_at
-            FROM entries
-            WHERE id = ?1
-            "#,
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
-
-        let entry_row = match entry_row {
-            Some(row) => row,
-            None => return Ok(None),
-        };
-
-        // Get fields for this entry
-        let field_rows = sqlx::query(
-            r#"
-            SELECT id, key, value, field_type, encrypted, idx
-            FROM entry_fields
-            WHERE entry_id = ?1
-            ORDER BY idx
-            "#,
-        )
-        .bind(id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
-
-        // Reconstruct fields
-        let mut fields = Vec::new();
-        for row in field_rows {
-            let field_id: String = row.get("id");
-            let key: String = row.get("key");
-            let value_str: String = row.get("value");
-            let field_type_str: String = row.get("field_type");
-            let encrypted: bool = row.get("encrypted");
-            let idx: i32 = row.get("idx");
-
-            let value = self.decrypt_field_value(&value_str, encrypted, identity)?;
-
-            // Parse field_type from string
-            let field_type = if field_type_str.starts_with("custom:") {
-                FieldType::Custom(field_type_str.strip_prefix("custom:").unwrap().to_string())
-            } else {
-                match field_type_str.as_str() {
-                    "username" => FieldType::Username,
-                    "token" => FieldType::Token,
-                    "url" => FieldType::Url,
-                    "notes" => FieldType::Notes,
-                    "tags" => FieldType::Tags,
-                    "favorite" => FieldType::Favorite,
-                    "totp_secret" => FieldType::TotpSecret,
-                    "totp_algorithm" => FieldType::TotpAlgorithm,
-                    "totp_digits" => FieldType::TotpDigits,
-                    "totp_period" => FieldType::TotpPeriod,
-                    "totp_issuer" => FieldType::TotpIssuer,
-                    "totp_account" => FieldType::TotpAccount,
-                    "ssh_private_key" => FieldType::SshPrivateKey,
-                    "ssh_public_key" => FieldType::SshPublicKey,
-                    "ssh_key_type" => FieldType::SshKeyType,
-                    "ssh_comment" => FieldType::SshComment,
-                    "password_history" => FieldType::PasswordHistory,
-                    other => FieldType::Custom(other.to_string()),
-                }
-            };
-
-            fields.push(Field {
-                id: uuid::Uuid::parse_str(&field_id).map_err(|_| DbError::CorruptedData)?,
-                key,
-                value,
-                field_type,
-                encrypted,
-                idx,
-            });
-        }
-
-        // Parse entry_type from string
-        let entry_type_str: String = entry_row.get("entry_type");
-        let entry_type = match entry_type_str.as_str() {
-            "token" => EntryType::Token,
-            "otp" => EntryType::Otp,
-            "ssh_key" => EntryType::SshKey,
-            "note" => EntryType::Note,
-            _ => return Err(DbError::CorruptedData.into()),
-        };
-
-        Ok(Some(Entry {
-            id: uuid::Uuid::parse_str(&entry_row.get::<String, _>("id"))
-                .map_err(|_| DbError::CorruptedData)?,
-            vault_id: uuid::Uuid::parse_str(&entry_row.get::<String, _>("vault_id"))
-                .map_err(|_| DbError::CorruptedData)?,
-            name: entry_row.get("name"),
-            entry_type,
-            created_at: entry_row.get("created_at"),
-            modified_at: entry_row.get("modified_at"),
-            fields,
-        }))
-    }
-
-    async fn list_entries(
-        &self,
-        vault_id: uuid::Uuid,
-        query: Option<&str>,
-        identity: &AgeIdentity,
-    ) -> Result<Vec<Entry>> {
-        let entry_rows = match query {
-            None => sqlx::query(
-                r#"
-                    SELECT id
-                    FROM entries
-                    WHERE vault_id = ?1
-                    ORDER BY name
-                    "#,
-            )
-            .bind(vault_id.to_string())
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DbError::Query(e.to_string()))?,
-            Some(q) => {
-                let search_pattern = format!("%{}%", q);
-                sqlx::query(
-                    r#"
-                    SELECT DISTINCT e.id
-                    FROM entries e
-                    JOIN entry_fields f ON f.entry_id = e.id
-                    WHERE e.vault_id = ?1
-                      AND f.encrypted = 0
-                      AND (f.key LIKE ?2 OR f.value LIKE ?2 OR e.name LIKE ?2)
-                    ORDER BY e.name
-                    "#,
-                )
-                .bind(vault_id.to_string())
-                .bind(&search_pattern)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| DbError::Query(e.to_string()))?
-            }
-        };
-
-        let mut entries = Vec::new();
-        for row in entry_rows {
-            let id: String = row.get("id");
-            let entry_id = uuid::Uuid::parse_str(&id).map_err(|_| DbError::CorruptedData)?;
-            if let Some(entry) = self.get_entry(entry_id, identity).await? {
-                entries.push(entry);
-            }
-        }
-
-        Ok(entries)
-    }
-
-    async fn delete_entry(&self, id: uuid::Uuid) -> Result<()> {
-        let result = sqlx::query("DELETE FROM entries WHERE id = ?1")
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DbError::Query(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            return Err(DbError::EntryNotFound(id).into());
-        }
-
         Ok(())
     }
 }

@@ -1,10 +1,9 @@
 //! Vault CLI command handlers.
 
 use crate::args::VaultCommands;
-use bogita_core::crypto::AgeCrypto;
 use bogita_core::domain::Vault;
 use bogita_core::error::{DbError, Error, Result};
-use bogita_core::storage::sqlite::SqliteStorage;
+use bogita_core::ports::{Crypto, Storage};
 use bogita_core::vault::registry::VaultRegistry;
 
 pub enum VaultOutput {
@@ -12,10 +11,14 @@ pub enum VaultOutput {
     Ok,
 }
 
-pub async fn handle_vault(
+pub async fn handle_vault<S, C>(
     cmd: VaultCommands,
-    registry: VaultRegistry<SqliteStorage<AgeCrypto>, AgeCrypto>,
-) -> Result<VaultOutput> {
+    registry: VaultRegistry<S, C>,
+) -> Result<VaultOutput>
+where
+    S: Storage,
+    C: Crypto + Clone,
+{
     match cmd {
         VaultCommands::List => {
             let vaults = registry.list_vaults().await?;

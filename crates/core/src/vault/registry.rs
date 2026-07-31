@@ -2,7 +2,7 @@
 
 use crate::domain::{AgeIdentity, Vault};
 use crate::error::Result;
-use crate::ports::{Crypto, Storage};
+use crate::ports::{Crypto, EntryStore, VaultStore};
 use crate::vault::service::VaultService;
 use uuid::Uuid;
 
@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct VaultRegistry<S, C>
 where
-    S: Storage,
+    S: VaultStore,
     C: Crypto,
 {
     storage: S,
@@ -23,7 +23,7 @@ where
 
 impl<S, C> VaultRegistry<S, C>
 where
-    S: Storage,
+    S: VaultStore,
     C: Crypto + Clone,
 {
     pub fn new(storage: S, crypto: C) -> Self {
@@ -67,7 +67,10 @@ where
     /// The service uses the vault's recipients for encryption and the supplied
     /// identity for decryption. The registry's storage and crypto are borrowed
     /// by reference so no cloning of heavy state is required.
-    pub fn vault_service_for(&self, vault: &Vault, identity: AgeIdentity) -> VaultService<&S, C> {
+    pub fn vault_service_for(&self, vault: &Vault, identity: AgeIdentity) -> VaultService<&S, C>
+    where
+        S: VaultStore + EntryStore,
+    {
         VaultService::new(
             &self.storage,
             self.crypto.clone(),

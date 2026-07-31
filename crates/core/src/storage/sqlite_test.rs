@@ -7,7 +7,7 @@ use crate::domain::{
     AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault,
     VaultBackend,
 };
-use crate::ports::Storage;
+use crate::ports::{EntryStore, VaultStore};
 use crate::storage::sqlite::SqliteStorage;
 use uuid::Uuid;
 
