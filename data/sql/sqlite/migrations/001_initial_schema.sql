@@ -1,4 +1,4 @@
--- Initial schema for Bogita password manager
+-- Initial schema for Bogita secret manager
 -- Field-based system with granular encryption
 
 -- Vaults table
@@ -21,7 +21,7 @@ CREATE TABLE entries (
     id TEXT PRIMARY KEY NOT NULL,
     vault_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    entry_type TEXT NOT NULL CHECK(entry_type IN ('password', 'otp', 'ssh_key', 'note')),
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('token', 'otp', 'ssh_key', 'note')),
     created_at INTEGER NOT NULL,
     modified_at INTEGER NOT NULL,
     FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE,

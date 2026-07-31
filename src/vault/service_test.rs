@@ -32,7 +32,7 @@ fn make_entry(vault_id: Uuid, name: &str) -> Entry {
         id: Uuid::new_v4(),
         vault_id,
         name: name.to_string(),
-        entry_type: EntryType::Password,
+        entry_type: EntryType::Token,
         created_at: now(),
         modified_at: now(),
         fields: vec![
@@ -48,7 +48,7 @@ fn make_entry(vault_id: Uuid, name: &str) -> Entry {
                 id: Uuid::new_v4(),
                 key: "password".to_string(),
                 value: FieldValue::Hidden("secret".to_string()),
-                field_type: FieldType::Password,
+                field_type: FieldType::Token,
                 encrypted: true,
                 idx: 1,
             },
@@ -173,7 +173,7 @@ async fn test_update_entry() {
         id: entry.id,
         vault_id,
         name: "GitHub Updated".to_string(),
-        entry_type: EntryType::Password,
+        entry_type: EntryType::Token,
         created_at: entry.created_at,
         modified_at: now(),
         fields: vec![Field {

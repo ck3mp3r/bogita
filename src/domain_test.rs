@@ -7,9 +7,9 @@ use std::str::FromStr;
 #[test]
 fn test_entry_type_serialization() {
     // Test that EntryType serializes to expected snake_case strings
-    let password = EntryType::Password;
-    let json = serde_json::to_string(&password).unwrap();
-    assert_eq!(json, r#""password""#);
+    let token = EntryType::Token;
+    let json = serde_json::to_string(&token).unwrap();
+    assert_eq!(json, r#""token""#);
 
     let otp = EntryType::Otp;
     let json = serde_json::to_string(&otp).unwrap();
@@ -129,7 +129,7 @@ fn test_entry_with_password_fields() {
         id: entry_id,
         vault_id,
         name: "GitHub".to_string(),
-        entry_type: EntryType::Password,
+        entry_type: EntryType::Token,
         created_at: 1234567890,
         modified_at: 1234567890,
         fields: vec![
@@ -145,7 +145,7 @@ fn test_entry_with_password_fields() {
                 id: Uuid::new_v4(),
                 key: "password".to_string(),
                 value: FieldValue::Hidden("secret123".to_string()),
-                field_type: FieldType::Password,
+                field_type: FieldType::Token,
                 encrypted: true,
                 idx: 1,
             },
@@ -162,7 +162,7 @@ fn test_entry_with_password_fields() {
 
     // Verify entry structure
     assert_eq!(entry.name, "GitHub");
-    assert_eq!(entry.entry_type, EntryType::Password);
+    assert_eq!(entry.entry_type, EntryType::Token);
     assert_eq!(entry.fields.len(), 3);
 
     // Verify fields
@@ -276,7 +276,7 @@ fn test_change_with_entry() {
         id: Uuid::new_v4(),
         vault_id: Uuid::new_v4(),
         name: "Changed Entry".to_string(),
-        entry_type: EntryType::Password,
+        entry_type: EntryType::Token,
         created_at: 1234567890,
         modified_at: 1234567899,
         fields: vec![],

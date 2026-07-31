@@ -1,52 +1,43 @@
 //! Configuration and path management for Bogita storage
 //!
-//! Handles XDG directory structure with separate dev/release directories.
+//! Follows the XDG Base Directory Specification via the `xdg` crate.
+//! Debug builds use a `-dev` suffix to keep dev/release data separate.
 
 use crate::error::{ConfigError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// Directory names based on build mode
+// App name used as the XDG prefix, varies by build profile.
 #[cfg(debug_assertions)]
-const DATA_DIR_NAME: &str = "bogita-dev";
+const APP_NAME: &str = "bogita-dev";
 
 #[cfg(not(debug_assertions))]
-const DATA_DIR_NAME: &str = "bogita";
+const APP_NAME: &str = "bogita";
 
-#[cfg(debug_assertions)]
-const CONFIG_DIR_NAME: &str = "bogita-dev";
+fn xdg_dirs() -> xdg::BaseDirectories {
+    xdg::BaseDirectories::with_prefix(APP_NAME)
+}
 
-#[cfg(not(debug_assertions))]
-const CONFIG_DIR_NAME: &str = "bogita";
-
-/// Get the default database directory path
-///
-/// Uses XDG_DATA_HOME/bogita (or bogita-dev in debug builds)
+/// `$XDG_DATA_HOME/bogita[-dev]/`  (default: `~/.local/share/bogita[-dev]/`)
 pub fn default_data_dir() -> PathBuf {
-    dirs::data_dir()
-        .expect("Failed to determine XDG_DATA_HOME")
-        .join(DATA_DIR_NAME)
+    xdg_dirs()
+        .get_data_home()
+        .expect("failed to resolve XDG data home")
 }
 
-/// Get the default configuration directory path
-///
-/// Uses XDG_CONFIG_HOME/bogita (or bogita-dev in debug builds)
+/// `$XDG_CONFIG_HOME/bogita[-dev]/`  (default: `~/.config/bogita[-dev]/`)
 pub fn default_config_dir() -> PathBuf {
-    dirs::config_dir()
-        .expect("Failed to determine XDG_CONFIG_HOME")
-        .join(CONFIG_DIR_NAME)
+    xdg_dirs()
+        .get_config_home()
+        .expect("failed to resolve XDG config home")
 }
 
-/// Get the default SQLite database file path.
-///
-/// Returns `XDG_DATA_HOME/bogita[-dev]/vault.db`
+/// `$XDG_DATA_HOME/bogita[-dev]/vault.db`
 pub fn default_db_path() -> PathBuf {
     default_data_dir().join("vault.db")
 }
 
-/// Get the default age identity file path.
-///
-/// Returns `XDG_DATA_HOME/bogita[-dev]/identity.age`
+/// `$XDG_DATA_HOME/bogita[-dev]/identity.age`
 pub fn default_identity_path() -> PathBuf {
     default_data_dir().join("identity.age")
 }

@@ -15,6 +15,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 /// SQLite storage adapter with field-level encryption
+#[derive(Clone)]
 pub struct SqliteStorage<C>
 where
     C: Crypto,
@@ -284,7 +285,7 @@ where
         .bind(entry.vault_id.to_string())
         .bind(&entry.name)
         .bind(match entry.entry_type {
-            EntryType::Password => "password",
+            EntryType::Token => "token",
             EntryType::Otp => "otp",
             EntryType::SshKey => "ssh_key",
             EntryType::Note => "note",
@@ -308,7 +309,7 @@ where
 
             let field_type_str = match &field.field_type {
                 FieldType::Username => "username".to_string(),
-                FieldType::Password => "password".to_string(),
+                FieldType::Token => "token".to_string(),
                 FieldType::Url => "url".to_string(),
                 FieldType::Notes => "notes".to_string(),
                 FieldType::Tags => "tags".to_string(),
@@ -402,7 +403,7 @@ where
             } else {
                 match field_type_str.as_str() {
                     "username" => FieldType::Username,
-                    "password" => FieldType::Password,
+                    "token" => FieldType::Token,
                     "url" => FieldType::Url,
                     "notes" => FieldType::Notes,
                     "tags" => FieldType::Tags,
@@ -435,7 +436,7 @@ where
         // Parse entry_type from string
         let entry_type_str: String = entry_row.get("entry_type");
         let entry_type = match entry_type_str.as_str() {
-            "password" => EntryType::Password,
+            "token" => EntryType::Token,
             "otp" => EntryType::Otp,
             "ssh_key" => EntryType::SshKey,
             "note" => EntryType::Note,

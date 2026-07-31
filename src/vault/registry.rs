@@ -11,6 +11,7 @@ use uuid::Uuid;
 /// The registry owns the shared storage and crypto adapters. A `VaultService` is
 /// constructed on demand for a specific vault, bound to that vault's recipients
 /// and the caller's identity.
+#[derive(Clone)]
 pub struct VaultRegistry<S, C>
 where
     S: Storage,

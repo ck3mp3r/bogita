@@ -154,7 +154,7 @@ async fn test_vault_service_for_can_add_entry() {
         id: Uuid::new_v4(),
         vault_id: vault.id,
         name: "GitHub".to_string(),
-        entry_type: EntryType::Password,
+        entry_type: EntryType::Token,
         created_at: chrono::Utc::now().timestamp(),
         modified_at: chrono::Utc::now().timestamp(),
         fields: vec![Field {

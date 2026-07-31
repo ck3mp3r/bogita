@@ -107,6 +107,9 @@ pub enum ValidationError {
     #[error("empty password")]
     EmptyPassword,
 
-    #[error("invalid OTP secret")]
-    InvalidOtpSecret,
+    #[error("invalid OTP secret: {0}")]
+    InvalidOtpSecret(String),
+
+    #[error("invalid OTP URI: {0}")]
+    InvalidOtpUri(String),
 }

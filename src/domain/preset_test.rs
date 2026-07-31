@@ -15,7 +15,7 @@ fn vault_id() -> Uuid {
 #[test]
 fn test_login_preset_entry_type() {
     let entry = FieldPreset::Login.build("GitHub", vault_id());
-    assert_eq!(entry.entry_type, EntryType::Password);
+    assert_eq!(entry.entry_type, EntryType::Token);
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn test_login_preset_has_password_field() {
     let field = entry
         .fields
         .iter()
-        .find(|f| f.field_type == FieldType::Password)
+        .find(|f| f.field_type == FieldType::Token)
         .expect("should have password field");
     assert_eq!(field.key, "password");
     assert!(field.encrypted, "password must be encrypted");

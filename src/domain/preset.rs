@@ -25,7 +25,7 @@ impl FieldPreset {
     pub fn build(self, name: &str, vault_id: Uuid) -> Entry {
         let now = chrono::Utc::now().timestamp();
         let (entry_type, fields) = match self {
-            FieldPreset::Login => (EntryType::Password, login_fields()),
+            FieldPreset::Login => (EntryType::Token, login_fields()),
             FieldPreset::SshKey => (EntryType::SshKey, sshkey_fields()),
             FieldPreset::Note => (EntryType::Note, note_fields()),
         };
@@ -55,7 +55,7 @@ fn login_fields() -> Vec<Field> {
             id: Uuid::new_v4(),
             key: "password".to_string(),
             value: FieldValue::Hidden(String::new()),
-            field_type: FieldType::Password,
+            field_type: FieldType::Token,
             encrypted: true,
             idx: 1,
         },

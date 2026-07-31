@@ -103,7 +103,7 @@ impl FromStr for AgeIdentity {
 // ============================================================================
 
 /// A vault entry containing fields with granular encryption control
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     /// Unique identifier (UUID v4 for sync-friendly IDs)
     pub id: Uuid,
@@ -128,17 +128,17 @@ pub struct Entry {
 }
 
 /// Entry type discriminator
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryType {
-    Password,
+    Token,
     Otp,
     SshKey,
     Note,
 }
 
 /// A field in an entry with typed value and encryption control
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     /// Unique identifier for the field
     pub id: Uuid,
@@ -191,7 +191,7 @@ pub enum FieldValue {
 pub enum FieldType {
     // Common fields
     Username,
-    Password,
+    Token,
     Url,
     Notes,
     Tags,
