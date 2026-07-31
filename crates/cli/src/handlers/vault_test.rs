@@ -1,9 +1,9 @@
-use crate::cli::args::VaultCommands;
-use crate::cli::handlers::vault::{handle_vault, VaultOutput};
-use crate::crypto::age::AgeCrypto;
-use crate::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
-use crate::storage::sqlite::SqliteStorage;
-use crate::vault::registry::VaultRegistry;
+use crate::args::VaultCommands;
+use crate::handlers::vault::{handle_vault, VaultOutput};
+use bogita_core::crypto::AgeCrypto;
+use bogita_core::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
+use bogita_core::storage::sqlite::SqliteStorage;
+use bogita_core::vault::registry::VaultRegistry;
 use chrono::Utc;
 use uuid::Uuid;
 

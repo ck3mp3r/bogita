@@ -1,0 +1,19 @@
+[package]
+name = "bogita-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+bogita-core = { path = "../core" }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+chrono = "0.4"
+uuid = { version = "1.24", features = ["v4"] }

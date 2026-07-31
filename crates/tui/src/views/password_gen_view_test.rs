@@ -1,6 +1,6 @@
 //! Tests for the password generator TUI view.
 
-use crate::tui::views::password_gen_view::{PasswordGenAction, PasswordGenView};
+use crate::views::password_gen_view::{PasswordGenAction, PasswordGenView};
 use ratatui::crossterm::event::KeyCode;
 
 fn make_view() -> PasswordGenView {

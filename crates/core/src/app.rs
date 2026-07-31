@@ -10,9 +10,6 @@ use crate::vault::registry::VaultRegistry;
 use chrono::Utc;
 use uuid::Uuid;
 
-#[cfg(test)]
-mod init_test;
-
 /// Fully-bootstrapped application state.
 pub struct App {
     pub config: AppConfig,

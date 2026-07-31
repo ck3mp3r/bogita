@@ -1,7 +1,7 @@
-use crate::domain::{
+use bogita_core::domain::{
     Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault, VaultBackend,
 };
-use crate::tui::views::main_view::{Column, MainView, MainViewAction};
+use crate::views::main_view::{Column, MainView, MainViewAction};
 use chrono::Utc;
 use ratatui::crossterm::event::KeyCode;
 use uuid::Uuid;

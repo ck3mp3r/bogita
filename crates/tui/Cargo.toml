@@ -1,0 +1,24 @@
+[package]
+name = "bogita-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+bogita-core = { path = "../core" }
+ratatui = { version = "0.30", features = ["crossterm"] }
+rat-widget = "3.2"
+rat-popup = "3.0"
+rat-focus = "2.1"
+rat-event = "2.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.24", features = ["v4", "serde"] }
+secrecy = { version = "0.10", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros"] }
+tempfile = "3"

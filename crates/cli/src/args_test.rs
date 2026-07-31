@@ -1,4 +1,4 @@
-use super::args::{AgentCommands, Cli, Commands, EntryCommands, VaultCommands};
+use crate::args::{AgentCommands, Cli, Commands, EntryCommands, VaultCommands};
 use clap::Parser;
 
 fn parse(args: &[&str]) -> Cli {

@@ -10,7 +10,7 @@
 //!   j / k / Down / Up — scroll within the focused column
 //!   s — toggle reveal on the selected hidden field (Col 3 focused)
 
-use crate::domain::{Entry, FieldType, FieldValue, Vault};
+use bogita_core::domain::{Entry, FieldType, FieldValue, Vault};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -323,8 +323,7 @@ impl MainView {
     }
 
     /// Replace the entry list (e.g. after add/edit/delete) and reset selection.
-    pub fn reload_entries(&mut self, entries: Vec<crate::domain::Entry>) {
-        self.entries = entries;
+    pub fn reload_entries(&mut self, entries: Vec<bogita_core::domain::Entry>) {        self.entries = entries;
         self.reset_entry_selection();
     }
 
@@ -332,8 +331,7 @@ impl MainView {
     /// Falls back to index 0 if the id is not found or `select_id` is `None`.
     pub fn reload_entries_select(
         &mut self,
-        entries: Vec<crate::domain::Entry>,
-        select_id: Option<uuid::Uuid>,
+        entries: Vec<bogita_core::domain::Entry>,        select_id: Option<uuid::Uuid>,
     ) {
         self.entries = entries;
         self.detail_field = 0;
@@ -640,7 +638,7 @@ impl MainView {
             let selected = focused && field_idx == self.detail_field;
 
             let (display_value, is_hidden) = if field.field_type == FieldType::TotpSecret {
-                use crate::service::otp::compute_totp;
+                use bogita_core::service::otp::compute_totp;
                 let raw = match &field.value {
                     FieldValue::Hidden(s) | FieldValue::Text(s) => s.as_str(),
                     _ => "",
@@ -737,7 +735,7 @@ impl MainView {
     pub fn copy_value_for(&self, entry: &Entry, field_idx: usize) -> Option<String> {
         let field = entry.fields.get(field_idx)?;
         if field.field_type == FieldType::TotpSecret {
-            use crate::service::otp::compute_totp;
+            use bogita_core::service::otp::compute_totp;
             let raw = match &field.value {
                 FieldValue::Hidden(s) | FieldValue::Text(s) => s.as_str(),
                 _ => "",

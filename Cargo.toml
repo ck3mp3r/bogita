@@ -1,5 +1,8 @@
-[package]
-name = "bogita"
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
@@ -7,80 +10,13 @@ authors = ["Christian Kemper <christian.kemper@kemper.buzz>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ck3mp3r/bogita"
 homepage = "https://github.com/ck3mp3r/bogita"
-keywords = ["password-manager", "security", "encryption", "ssh-agent", "vault"]
-categories = ["command-line-utilities", "cryptography", "authentication"]
-
-[features]
-default = ["sqlite", "git"]
-sqlite = ["dep:sqlx"]
-git = ["dep:git2"]
-# aws = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
-# gcp = ["dep:google-cloud-secretmanager"]
-
-[dependencies]
-# CLI
-clap = { version = "4", features = ["derive"] }
-
-# TUI
-ratatui = { version = "0.30", features = ["crossterm"] }
-rat-widget = "3.2"
-rat-popup = "3.0"
-rat-focus = "2.1"
-rat-event = "2.1"
-
-# Security and cryptography
-age = { version = "0.12", default-features = false }
-zeroize = { version = "1.9", features = ["derive"] }
-secrecy = { version = "0.10", features = ["serde"] }
-base64 = "0.23"
-
-# Storage (optional)
-sqlx = { version = "0.9", optional = true, features = ["runtime-tokio", "sqlite", "migrate"] }
-
-# Sync backends (optional)
-git2 = { version = "0.21", optional = true, default-features = false }
-# aws-sdk-secretsmanager = { version = "1.0", optional = true }
-# aws-config = { version = "1.0", optional = true }
-# google-cloud-secretmanager = { version = "0.5", optional = true }
-
-# Async runtime
-tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs"] }
-async-trait = "0.1"
-
-# Error handling
-thiserror = "2.0"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "1"
-
-# Clipboard
-arboard = { version = "3", default-features = false }
-
-# Password generation
-rand = "0.10"
-
-# OTP/TOTP
-totp-lite = "2"
-data-encoding = "2"
-
-# Utilities
-uuid = { version = "1.24", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-xdg = "3"
-
-[dev-dependencies]
-serde_json = "1.0"
-tempfile = "3"
-serial_test = "4"
 
 [profile.release]
-opt-level = "z"       # Optimize for size
-lto = true            # Enable Link Time Optimization
-codegen-units = 1     # Single codegen unit for better optimization
-panic = "abort"       # Abort on panic (smaller binary)
-strip = true          # Strip symbols from binary
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 
 [profile.release-with-debug]
 inherits = "release"

@@ -1,11 +1,11 @@
-use crate::cli::args::EntryCommands;
-use crate::cli::handlers::entry::{handle_get, handle_ls, handle_search, EntryOutput};
-use crate::crypto::age::AgeCrypto;
-use crate::domain::{
+use crate::args::EntryCommands;
+use crate::handlers::entry::{handle_get, handle_ls, handle_search, EntryOutput};
+use bogita_core::crypto::AgeCrypto;
+use bogita_core::domain::{
     AgeIdentity, Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault, VaultBackend,
 };
-use crate::storage::sqlite::SqliteStorage;
-use crate::vault::registry::VaultRegistry;
+use bogita_core::storage::sqlite::SqliteStorage;
+use bogita_core::vault::registry::VaultRegistry;
 use chrono::Utc;
 use uuid::Uuid;
 

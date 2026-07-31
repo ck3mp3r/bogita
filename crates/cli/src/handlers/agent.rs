@@ -3,8 +3,8 @@
 //! Agent lifecycle (start/stop) and key listing are stubbed here.
 //! Full SSH agent daemon implementation is a separate phase.
 
-use crate::cli::args::AgentCommands;
-use crate::error::Result;
+use crate::args::AgentCommands;
+use bogita_core::error::Result;
 
 pub enum AgentOutput {
     /// Agent started (or was already running): socket path.

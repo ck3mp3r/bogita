@@ -1,0 +1,27 @@
+[package]
+name = "bogita"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["password-manager", "security", "encryption", "ssh-agent", "vault"]
+categories = ["command-line-utilities", "cryptography", "authentication"]
+
+[[bin]]
+name = "bogita"
+path = "src/main.rs"
+
+[features]
+default = ["sqlite", "git"]
+sqlite = ["bogita-core/sqlite"]
+git = ["bogita-core/git"]
+
+[dependencies]
+bogita-core = { path = "../core" }
+bogita-cli = { path = "../cli" }
+bogita-tui = { path = "../tui" }
+tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros"] }
+clap = { version = "4", features = ["derive"] }

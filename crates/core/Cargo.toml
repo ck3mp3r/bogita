@@ -1,0 +1,39 @@
+[package]
+name = "bogita-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["sqlite", "git"]
+sqlite = ["dep:sqlx"]
+git = ["dep:git2"]
+
+[dependencies]
+age = { version = "0.12", default-features = false }
+zeroize = { version = "1.9", features = ["derive"] }
+secrecy = { version = "0.10", features = ["serde"] }
+base64 = "0.23"
+sqlx = { version = "0.9", optional = true, features = ["runtime-tokio", "sqlite", "migrate"] }
+git2 = { version = "0.21", optional = true, default-features = false }
+tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs"] }
+async-trait = "0.1"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1"
+uuid = { version = "1.24", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+xdg = "3"
+arboard = { version = "3", default-features = false }
+rand = "0.10"
+totp-lite = "2"
+data-encoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "4"

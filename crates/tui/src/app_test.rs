@@ -1,15 +1,15 @@
-use crate::tui::app::{RunState, Tui};
-use crate::tui::context::TuiContext;
+use crate::app::{RunState, Tui};
+use crate::context::TuiContext;
 use ratatui::crossterm::event::KeyCode;
 
 /// Build a minimal App for testing without touching the filesystem.
 ///
 /// If `with_entry` is true, seeds the Personal vault with one entry.
-async fn make_app() -> crate::app::App {
-    use crate::crypto::age::AgeCrypto;
-    use crate::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
-    use crate::storage::sqlite::SqliteStorage;
-    use crate::vault::registry::VaultRegistry;
+async fn make_app() -> bogita_core::app::App {
+    use bogita_core::crypto::AgeCrypto;
+    use bogita_core::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
+    use bogita_core::storage::sqlite::SqliteStorage;
+    use bogita_core::vault::registry::VaultRegistry;
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -35,16 +35,16 @@ async fn make_app() -> crate::app::App {
     // Leak the tempdir so the DB file lives for the duration of the test.
     std::mem::forget(dir);
 
-    crate::app::App {
-        config: crate::storage::config::AppConfig::default(),
+    bogita_core::app::App {
+        config: bogita_core::storage::config::AppConfig::default(),
         identity,
         registry,
     }
 }
 
 /// Build an App seeded with one entry in the Personal vault.
-async fn make_app_with_entry() -> crate::app::App {
-    use crate::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+async fn make_app_with_entry() -> bogita_core::app::App {
+    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
     use chrono::Utc;
     use uuid::Uuid;
 

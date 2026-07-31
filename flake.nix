@@ -35,7 +35,7 @@
         ];
         pkgs = import inputs.nixpkgs {inherit system overlays;};
 
-        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        cargoToml = builtins.fromTOML (builtins.readFile ./crates/main/Cargo.toml);
         cargoLock = {lockFile = ./Cargo.lock;};
 
         # Import packaging logic

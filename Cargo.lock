@@ -323,20 +323,37 @@ dependencies = [
 name = "bogita"
 version = "0.1.0"
 dependencies = [
+ "bogita-cli",
+ "bogita-core",
+ "bogita-tui",
+ "clap",
+ "tokio",
+]
+
+[[package]]
+name = "bogita-cli"
+version = "0.1.0"
+dependencies = [
+ "bogita-core",
+ "chrono",
+ "clap",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "bogita-core"
+version = "0.1.0"
+dependencies = [
  "age",
  "arboard",
  "async-trait",
  "base64 0.23.0",
  "chrono",
- "clap",
  "data-encoding",
  "git2",
  "rand 0.10.2",
- "rat-event",
- "rat-focus",
- "rat-popup",
- "rat-widget",
- "ratatui",
  "secrecy",
  "serde",
  "serde_json",
@@ -350,6 +367,23 @@ dependencies = [
  "uuid",
  "xdg",
  "zeroize",
+]
+
+[[package]]
+name = "bogita-tui"
+version = "0.1.0"
+dependencies = [
+ "bogita-core",
+ "chrono",
+ "rat-event",
+ "rat-focus",
+ "rat-popup",
+ "rat-widget",
+ "ratatui",
+ "secrecy",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

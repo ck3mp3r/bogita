@@ -14,7 +14,7 @@
 //!   `[s]`         toggle symbols
 //!   `[x]`         toggle avoid-ambiguous
 
-use crate::service::password_gen::{CharsetOptions, PasswordGen};
+use bogita_core::service::password_gen::{CharsetOptions, PasswordGen};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};

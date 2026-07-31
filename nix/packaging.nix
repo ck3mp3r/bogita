@@ -1,5 +1,6 @@
 # Packaging logic for bogita
 # Uses rustnix.lib.rust.buildTargetOutputs pattern
+# cargoToml is read from crates/main/Cargo.toml (passed from flake.nix)
 {
   inputs,
   system,

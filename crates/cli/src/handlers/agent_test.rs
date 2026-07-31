@@ -1,5 +1,5 @@
-use crate::cli::args::AgentCommands;
-use crate::cli::handlers::agent::{handle_agent, AgentOutput};
+use crate::args::AgentCommands;
+use crate::handlers::agent::{handle_agent, AgentOutput};
 
 #[tokio::test]
 async fn agent_start_default_socket() {

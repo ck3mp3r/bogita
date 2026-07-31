@@ -28,7 +28,7 @@
 //! On a type slot, `j`/`k`/`Up`/`Down` navigate the selector and open the popup; the type is applied when the popup closes.
 //! `+` / `-` add / remove fields (available from any slot on the name row or key/type slots).
 
-use crate::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
 use chrono::Utc;
 use rat_event::{HandleEvent, Outcome, Regular};
 use rat_focus::{Focus, FocusBuilder};

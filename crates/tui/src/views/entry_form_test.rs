@@ -1,5 +1,5 @@
-use crate::domain::{FieldType, FieldValue};
-use crate::tui::views::entry_form::{EntryForm, FormAction, FormFieldType, FormMode};
+use bogita_core::domain::{FieldType, FieldValue};
+use crate::views::entry_form::{EntryForm, FormAction, FormFieldType, FormMode};
 use ratatui::crossterm::event::KeyCode;
 
 fn add_form() -> EntryForm {
@@ -498,7 +498,7 @@ fn esc_cancels_from_type_slot() {
 
 #[test]
 fn edit_form_pre_fills_name_and_fields() {
-    use crate::domain::{Entry, EntryType, Field};
+    use bogita_core::domain::{Entry, EntryType, Field};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -525,7 +525,7 @@ fn edit_form_pre_fills_name_and_fields() {
 
 #[test]
 fn edit_form_maps_token_field_type_to_form_token_type() {
-    use crate::domain::{Entry, EntryType, Field};
+    use bogita_core::domain::{Entry, EntryType, Field};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -555,7 +555,7 @@ fn edit_form_maps_token_field_type_to_form_token_type() {
 
 #[test]
 fn edit_form_maps_sshprivatekey_to_sshkey_form_type() {
-    use crate::domain::{Entry, EntryType, Field};
+    use bogita_core::domain::{Entry, EntryType, Field};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -833,7 +833,7 @@ fn notes_field_esc_cancels_form() {
 
 #[test]
 fn notes_field_round_trips_through_edit() {
-    use crate::domain::{Entry, EntryType, Field};
+    use bogita_core::domain::{Entry, EntryType, Field};
     use chrono::Utc;
     use uuid::Uuid;
 

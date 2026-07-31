@@ -1,11 +1,11 @@
 //! Entry CLI command handlers (read-only: ls, get, search).
 
-use crate::cli::args::EntryCommands;
-use crate::crypto::age::AgeCrypto;
-use crate::domain::{AgeIdentity, Entry, FieldType, FieldValue};
-use crate::error::{DbError, Error, Result};
-use crate::storage::sqlite::SqliteStorage;
-use crate::vault::registry::VaultRegistry;
+use crate::args::EntryCommands;
+use bogita_core::crypto::AgeCrypto;
+use bogita_core::domain::{AgeIdentity, Entry, FieldType, FieldValue};
+use bogita_core::error::{DbError, Error, Result};
+use bogita_core::storage::sqlite::SqliteStorage;
+use bogita_core::vault::registry::VaultRegistry;
 
 pub enum EntryOutput {
     /// `ls` / `search` — list of entries
@@ -20,8 +20,7 @@ pub enum EntryOutput {
 async fn resolve_vault(
     vault_name: &Option<String>,
     registry: &VaultRegistry<SqliteStorage<AgeCrypto>, AgeCrypto>,
-) -> Result<crate::domain::Vault> {
-    match vault_name {
+) -> Result<bogita_core::domain::Vault> {    match vault_name {
         Some(name) => {
             let vaults = registry.list_vaults().await?;
             vaults
@@ -119,8 +118,7 @@ pub async fn handle_search(
 }
 
 /// Compute the current TOTP code from a TotpSecret field and sibling TOTP fields.
-fn compute_totp(entry: &Entry, secret_field: &crate::domain::Field) -> Result<String> {
-    let secret = field_value_to_string(&secret_field.value);
+fn compute_totp(entry: &Entry, secret_field: &bogita_core::domain::Field) -> Result<String> {    let secret = field_value_to_string(&secret_field.value);
 
     let period = entry
         .fields
