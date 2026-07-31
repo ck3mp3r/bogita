@@ -4,8 +4,7 @@
 
 use crate::crypto::age::AgeCrypto;
 use crate::domain::{
-    AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault,
-    VaultBackend,
+    AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, Vault,
 };
 use crate::ports::{EntryStore, VaultStore};
 use crate::storage::sqlite::SqliteStorage;
@@ -364,9 +363,7 @@ fn make_vault(name: &str, is_default: bool) -> Vault {
         name: name.to_string(),
         is_default,
         created_at: chrono::Utc::now().timestamp(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: ":memory:".to_string(),
-        }),
+        sync_target: None,
         recipients: vec![recipient],
         lock_timeout: Some(300),
         auto_sync: false,
@@ -461,9 +458,7 @@ async fn test_save_vault_updates_existing() {
         name: "original-name".to_string(),
         is_default: false,
         created_at: chrono::Utc::now().timestamp(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: ":memory:".to_string(),
-        }),
+        sync_target: None,
         recipients: vec![],
         lock_timeout: None,
         auto_sync: false,

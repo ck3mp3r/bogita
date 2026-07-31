@@ -1,7 +1,7 @@
 //! Application bootstrap — first-run init and subsequent startup.
 
 use crate::crypto::age::AgeCrypto;
-use crate::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
+use crate::domain::{AgeIdentity, Vault};
 use crate::error::{ConfigError, Error, Result};
 use crate::storage::config::AppConfig;
 use crate::storage::identity::{read_identity, write_identity};
@@ -59,9 +59,7 @@ impl App {
             name: "Personal".to_string(),
             is_default: true,
             created_at: Utc::now().timestamp(),
-            backend: VaultBackend::Sqlite(SqliteConfig {
-                path: db_path.to_string_lossy().to_string(),
-            }),
+            sync_target: None,
             recipients: vec![recipient],
             lock_timeout: None,
             auto_sync: false,

@@ -57,6 +57,15 @@ pub enum EntryCommands {
         vault: Option<String>,
     },
 
+    /// Copy a field value to clipboard (auto-clears after 30s)
+    Cp {
+        name: String,
+        #[arg(long, short)]
+        field: String,
+        #[arg(long, short = 'v')]
+        vault: Option<String>,
+    },
+
     // ── TUI mutations ──────────────────────────────────────────────────────
     /// Add a new entry (opens TUI)
     Add {
@@ -92,6 +101,8 @@ pub enum VaultCommands {
     Sync { name: Option<String> },
     /// Set the default vault
     Default { name: String },
+    /// Remove a vault
+    Rm { name: String },
     /// Create a new vault (opens TUI)
     Add { name: String },
 }

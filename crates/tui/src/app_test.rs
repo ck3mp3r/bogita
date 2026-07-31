@@ -7,7 +7,7 @@ use ratatui::crossterm::event::KeyCode;
 /// If `with_entry` is true, seeds the Personal vault with one entry.
 async fn make_app() -> bogita_core::app::App {
     use bogita_core::crypto::AgeCrypto;
-    use bogita_core::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
+    use bogita_core::domain::{AgeIdentity, Vault};
     use bogita_core::storage::sqlite::SqliteStorage;
     use bogita_core::vault::registry::VaultRegistry;
     use chrono::Utc;
@@ -23,9 +23,7 @@ async fn make_app() -> bogita_core::app::App {
         name: "Personal".to_string(),
         is_default: true,
         created_at: Utc::now().timestamp(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: db_path.to_string_lossy().to_string(),
-        }),
+        sync_target: None,
         recipients: vec![identity.to_recipient()],
         lock_timeout: None,
         auto_sync: false,

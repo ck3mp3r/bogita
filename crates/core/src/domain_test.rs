@@ -295,18 +295,18 @@ fn test_change_with_entry() {
 }
 
 #[test]
-fn test_vault_backend_tagged_enum() {
-    let git_backend = VaultBackend::Git(GitConfig {
+fn test_sync_target_tagged_enum() {
+    let git_target = SyncTarget::Git(GitConfig {
         path: "/tmp/vault".to_string(),
         remote: "git@github.com:user/vault.git".to_string(),
     });
 
-    let json = serde_json::to_string(&git_backend).unwrap();
+    let json = serde_json::to_string(&git_target).unwrap();
     assert!(json.contains(r#""type":"git""#));
 
-    let deserialized: VaultBackend = serde_json::from_str(&json).unwrap();
+    let deserialized: SyncTarget = serde_json::from_str(&json).unwrap();
     match deserialized {
-        VaultBackend::Git(config) => {
+        SyncTarget::Git(config) => {
             assert_eq!(config.path, "/tmp/vault");
             assert_eq!(config.remote, "git@github.com:user/vault.git");
         }

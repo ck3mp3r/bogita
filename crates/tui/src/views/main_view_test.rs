@@ -1,7 +1,5 @@
 use crate::views::main_view::{Column, MainView, MainViewAction};
-use bogita_core::domain::{
-    Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault, VaultBackend,
-};
+use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue, Vault};
 use chrono::Utc;
 use ratatui::crossterm::event::KeyCode;
 use uuid::Uuid;
@@ -14,9 +12,7 @@ fn make_vault(name: &str) -> Vault {
         name: name.to_string(),
         is_default: false,
         created_at: Utc::now().timestamp(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: ":memory:".into(),
-        }),
+        sync_target: None,
         recipients: vec![],
         lock_timeout: None,
         auto_sync: false,

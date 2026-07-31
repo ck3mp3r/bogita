@@ -328,6 +328,12 @@ impl MainView {
         self.reset_entry_selection();
     }
 
+    /// Replace the vault list.
+    pub fn reload_vaults(&mut self, vaults: Vec<Vault>) {
+        self.vaults = vaults;
+        self.vault_state.select(Some(0));
+    }
+
     /// Replace the entry list and attempt to re-select the entry with `select_id`.
     /// Falls back to index 0 if the id is not found or `select_id` is `None`.
     pub fn reload_entries_select(

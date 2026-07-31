@@ -1,7 +1,7 @@
 use crate::args::VaultCommands;
 use crate::handlers::vault::{handle_vault, VaultOutput};
 use bogita_core::crypto::AgeCrypto;
-use bogita_core::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
+use bogita_core::domain::{AgeIdentity, Vault};
 use bogita_core::storage::sqlite::SqliteStorage;
 use bogita_core::vault::registry::VaultRegistry;
 use chrono::Utc;
@@ -18,9 +18,7 @@ async fn make_registry(
         name: "Personal".to_string(),
         is_default: true,
         created_at: Utc::now().timestamp(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: db_path.to_string_lossy().to_string(),
-        }),
+        sync_target: None,
         recipients: vec![identity.to_recipient()],
         lock_timeout: None,
         auto_sync: false,
@@ -58,6 +56,38 @@ async fn vault_default_unknown_vault_errors() {
     let registry = make_registry(&dir.path().join("test.db")).await;
     let result = handle_vault(
         VaultCommands::Default {
+            name: "nonexistent".to_string(),
+        },
+        registry,
+    )
+    .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn vault_rm_removes_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = make_registry(&dir.path().join("test.db")).await;
+    let output = handle_vault(
+        VaultCommands::Rm {
+            name: "Personal".to_string(),
+        },
+        registry.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(output, VaultOutput::Ok));
+    // Verify vault is gone
+    let vaults = registry.list_vaults().await.unwrap();
+    assert!(vaults.is_empty());
+}
+
+#[tokio::test]
+async fn vault_rm_unknown_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = make_registry(&dir.path().join("test.db")).await;
+    let result = handle_vault(
+        VaultCommands::Rm {
             name: "nonexistent".to_string(),
         },
         registry,

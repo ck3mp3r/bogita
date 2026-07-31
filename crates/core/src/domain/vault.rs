@@ -19,8 +19,8 @@ pub struct Vault {
     /// Creation timestamp
     pub created_at: i64,
 
-    /// Backend configuration
-    pub backend: VaultBackend,
+    /// Sync target configuration (None = local-only)
+    pub sync_target: Option<SyncTarget>,
 
     /// age recipients (public keys for encryption)
     pub recipients: Vec<AgeRecipient>,
@@ -32,14 +32,13 @@ pub struct Vault {
     pub auto_sync: bool,
 }
 
-/// Backend configuration (enum for different storage types)
+/// Sync target configuration (enum for different remote storage types)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum VaultBackend {
+pub enum SyncTarget {
     Git(GitConfig),
     Aws(AwsConfig),
     Gcp(GcpConfig),
-    Sqlite(SqliteConfig),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -86,10 +85,4 @@ pub struct GcpConfig {
     /// Use true for zero-trust scenarios where you don't trust the cloud provider
     #[serde(default)]
     pub double_encrypt: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SqliteConfig {
-    /// Database file path
-    pub path: String,
 }

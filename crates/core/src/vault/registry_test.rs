@@ -4,7 +4,7 @@
 //! Uses real SqliteStorage (:memory:) and real AgeCrypto — no mocks.
 
 use crate::crypto::age::AgeCrypto;
-use crate::domain::{AgeIdentity, SqliteConfig, Vault, VaultBackend};
+use crate::domain::{AgeIdentity, Vault};
 use crate::storage::sqlite::SqliteStorage;
 use crate::vault::registry::VaultRegistry;
 use uuid::Uuid;
@@ -17,9 +17,7 @@ fn make_vault(name: &str, is_default: bool) -> Vault {
         name: name.to_string(),
         is_default,
         created_at: chrono::Utc::now().timestamp(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: ":memory:".to_string(),
-        }),
+        sync_target: None,
         recipients: vec![recipient],
         lock_timeout: Some(300),
         auto_sync: false,

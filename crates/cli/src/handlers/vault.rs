@@ -51,5 +51,17 @@ where
             }
         }
         VaultCommands::Add { .. } => unreachable!("vault add is handled as TUI mutation"),
+        VaultCommands::Rm { name } => {
+            let vaults = registry.list_vaults().await?;
+            match vaults.iter().find(|v| v.name == name) {
+                Some(vault) => {
+                    registry.remove_vault(vault.id).await?;
+                    Ok(VaultOutput::Ok)
+                }
+                None => Err(Error::Database(DbError::Query(format!(
+                    "vault '{name}' not found"
+                )))),
+            }
+        }
     }
 }

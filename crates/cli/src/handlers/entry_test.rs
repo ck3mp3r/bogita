@@ -1,9 +1,7 @@
 use crate::args::EntryCommands;
 use crate::handlers::entry::{handle_get, handle_ls, handle_search, EntryOutput};
 use bogita_core::crypto::AgeCrypto;
-use bogita_core::domain::{
-    AgeIdentity, Entry, EntryType, Field, FieldType, FieldValue, SqliteConfig, Vault, VaultBackend,
-};
+use bogita_core::domain::{AgeIdentity, Entry, EntryType, Field, FieldType, FieldValue, Vault};
 use bogita_core::storage::sqlite::SqliteStorage;
 use bogita_core::vault::registry::VaultRegistry;
 use chrono::Utc;
@@ -76,9 +74,7 @@ async fn make_registry_single(
         name: "Personal".to_string(),
         is_default: true,
         created_at: now(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: db_path.to_string_lossy().to_string(),
-        }),
+        sync_target: None,
         recipients: vec![identity.to_recipient()],
         lock_timeout: None,
         auto_sync: false,
@@ -106,9 +102,7 @@ async fn make_registry_multi(
         name: "Personal".to_string(),
         is_default: true,
         created_at: now(),
-        backend: VaultBackend::Sqlite(SqliteConfig {
-            path: db_path.to_string_lossy().to_string(),
-        }),
+        sync_target: None,
         recipients: vec![identity.to_recipient()],
         lock_timeout: None,
         auto_sync: false,

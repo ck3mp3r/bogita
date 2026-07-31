@@ -1,5 +1,4 @@
 use crate::app::App;
-use crate::domain::VaultBackend;
 use crate::storage::config::AppConfig;
 use serial_test::serial;
 use tempfile::TempDir;
@@ -65,15 +64,7 @@ async fn personal_vault_is_default_and_sqlite_backed() {
 
     assert!(vault.is_default);
     assert!(
-        matches!(&vault.backend, VaultBackend::Sqlite(_)),
-        "expected Sqlite backend"
+        vault.sync_target.is_none(),
+        "expected no sync target for local vault"
     );
-
-    if let VaultBackend::Sqlite(cfg) = &vault.backend {
-        assert!(
-            cfg.path.ends_with("vault.db"),
-            "db path should end with vault.db, got: {}",
-            cfg.path
-        );
-    }
 }

@@ -18,4 +18,4 @@ pub use uuid::Uuid;
 pub use entity::{Entry, EntryType, Field, FieldType, FieldValue};
 pub use key::{AgeIdentity, AgeRecipient};
 pub use sync::{Change, Operation, PushResult, SyncMetadata, SyncType};
-pub use vault::{AwsConfig, GcpConfig, GitConfig, SqliteConfig, Vault, VaultBackend};
+pub use vault::{AwsConfig, GcpConfig, GitConfig, SyncTarget, Vault};

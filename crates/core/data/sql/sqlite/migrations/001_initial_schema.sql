@@ -8,7 +8,7 @@ CREATE TABLE vaults (
     is_default BOOLEAN NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     -- Backend configuration stored as JSON
-    backend_type TEXT NOT NULL CHECK(backend_type IN ('git', 'aws', 'gcp', 'sqlite')),
+    backend_type TEXT NOT NULL CHECK(backend_type IN ('git', 'aws', 'gcp', 'sqlite', 'none')),
     backend_config TEXT NOT NULL,
     -- Age recipients stored as JSON array
     recipients TEXT NOT NULL,

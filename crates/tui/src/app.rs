@@ -4,6 +4,7 @@ use crate::context::TuiContext;
 use crate::views::entry_form::{EntryForm, FormAction, FormMode};
 use crate::views::main_view::{MainView, MainViewAction};
 use crate::views::password_gen_view::{PasswordGenAction, PasswordGenView};
+use crate::views::vault_form::{VaultForm, VaultFormAction};
 use bogita_core::app::App;
 use bogita_core::domain::Entry;
 use bogita_core::error::Result;
@@ -47,6 +48,8 @@ enum ActiveView {
         gen: PasswordGenView,
         form: EntryForm,
     },
+    /// Vault creation form.
+    VaultForm(VaultForm),
 }
 
 /// A deferred async action set by [`Tui::handle_key`] and drained by
@@ -65,6 +68,10 @@ enum AppAction {
     LoadDetail {
         entry_id: Uuid,
         vault_id: Uuid,
+    },
+    /// Save a new vault.
+    SaveVault {
+        vault: bogita_core::domain::Vault,
     },
 }
 
@@ -112,6 +119,7 @@ impl Tui {
         let detail_entry = all_entries.into_iter().next();
         let active = match &context {
             TuiContext::AddEntry { name, .. } => ActiveView::Form(EntryForm::new_add(name.clone())),
+            TuiContext::AddVault { name } => ActiveView::VaultForm(VaultForm::new(name.clone())),
             _ => ActiveView::Main,
         };
         Ok(Self {
@@ -200,6 +208,7 @@ impl Tui {
                 form.render(frame, col3);
                 gen.render(frame, body_area);
             }
+            ActiveView::VaultForm(f) => f.render(frame, col3),
         }
 
         // Error overlay: rendered on top of everything else.
@@ -264,6 +273,15 @@ impl Tui {
             ActiveView::PasswordGen { .. } => {
                 "[g] regenerate  [a] accept  [Esc] cancel  [+/-] length  [u/l/d/s/x] charset"
                     .to_string()
+            }
+            ActiveView::VaultForm(f) => {
+                if f.is_name_focused() {
+                    "Editing vault name  ·  [Tab] toggle default  [Enter] create  [Esc] cancel"
+                        .to_string()
+                } else {
+                    "[Space] toggle default  [Tab] back to name  [Enter] create  [Esc] cancel"
+                        .to_string()
+                }
             }
         }
     }
@@ -462,6 +480,17 @@ impl Tui {
                     }
                 }
             }
+            ActiveView::VaultForm(form) => match form.handle_key(key) {
+                VaultFormAction::Confirm(mut vault) => {
+                    vault.recipients = vec![self.app.identity.to_recipient()];
+                    self.pending = Some(AppAction::SaveVault { vault });
+                    self.active = ActiveView::Main;
+                }
+                VaultFormAction::Cancel => {
+                    self.active = ActiveView::Main;
+                }
+                VaultFormAction::None => {}
+            },
         }
         self.state.clone()
     }
@@ -557,6 +586,25 @@ impl Tui {
                         .vault_service_for(v, self.app.identity.clone());
                     self.detail_entry = svc.get_entry(entry_id).await?;
                 }
+            }
+            AppAction::SaveVault { vault } => {
+                self.app.registry.add_vault(&vault).await?;
+                if vault.is_default {
+                    self.app.registry.set_default(vault.id).await?;
+                }
+                // Reload vaults and entries
+                let vaults = self.app.registry.list_vaults().await?;
+                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
+                for v in &vaults {
+                    let svc = self
+                        .app
+                        .registry
+                        .vault_service_for(v, self.app.identity.clone());
+                    let entries = svc.list_entries(v.id, None).await?;
+                    all_entries.extend(entries);
+                }
+                self.main_view.reload_vaults(vaults);
+                self.main_view.reload_entries(all_entries);
             }
         }
 

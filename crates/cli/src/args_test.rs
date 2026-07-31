@@ -146,6 +146,19 @@ fn entry_rm_parses() {
     ));
 }
 
+#[test]
+fn entry_cp_parses() {
+    let cli = parse(&["entry", "cp", "github", "--field", "password"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Cp {
+            ref name,
+            ref field,
+            vault: None,
+        })) if name == "github" && field == "password"
+    ));
+}
+
 // ── vault ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -208,6 +221,15 @@ fn vault_add_parses() {
     assert!(matches!(
         cli.command,
         Some(Commands::Vault(VaultCommands::Add { ref name })) if name == "work"
+    ));
+}
+
+#[test]
+fn vault_rm_parses() {
+    let cli = parse(&["vault", "rm", "personal"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Vault(VaultCommands::Rm { ref name })) if name == "personal"
     ));
 }
 

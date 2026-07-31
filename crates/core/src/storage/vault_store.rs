@@ -2,7 +2,7 @@
 
 use super::mapper::row_to_vault;
 use super::sqlite::SqliteStorage;
-use crate::domain::{Vault, VaultBackend};
+use crate::domain::{SyncTarget, Vault};
 use crate::error::{DbError, Error, Result};
 use crate::ports::VaultStore;
 use async_trait::async_trait;
@@ -14,14 +14,24 @@ where
     C: crate::ports::Crypto + Send + Sync,
 {
     async fn save_vault(&self, vault: &Vault) -> Result<()> {
-        let backend_type = match &vault.backend {
-            VaultBackend::Git(_) => "git",
-            VaultBackend::Aws(_) => "aws",
-            VaultBackend::Gcp(_) => "gcp",
-            VaultBackend::Sqlite(_) => "sqlite",
+        let (backend_type, backend_config) = match &vault.sync_target {
+            Some(SyncTarget::Git(_)) => (
+                "git",
+                serde_json::to_string(&vault.sync_target)
+                    .map_err(|e| Error::Database(DbError::Query(e.to_string())))?,
+            ),
+            Some(SyncTarget::Aws(_)) => (
+                "aws",
+                serde_json::to_string(&vault.sync_target)
+                    .map_err(|e| Error::Database(DbError::Query(e.to_string())))?,
+            ),
+            Some(SyncTarget::Gcp(_)) => (
+                "gcp",
+                serde_json::to_string(&vault.sync_target)
+                    .map_err(|e| Error::Database(DbError::Query(e.to_string())))?,
+            ),
+            None => ("none", "{}".to_string()),
         };
-        let backend_config = serde_json::to_string(&vault.backend)
-            .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
         let recipients = serde_json::to_string(&vault.recipients)
             .map_err(|e| Error::Database(DbError::Query(e.to_string())))?;
 
@@ -58,7 +68,7 @@ where
     async fn get_vault(&self, id: uuid::Uuid) -> Result<Option<Vault>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
+            SELECT id, name, is_default, created_at, backend_type, backend_config, recipients, lock_timeout, auto_sync
             FROM vaults
             WHERE id = ?1
             "#,
@@ -77,7 +87,7 @@ where
     async fn list_vaults(&self) -> Result<Vec<Vault>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
+            SELECT id, name, is_default, created_at, backend_type, backend_config, recipients, lock_timeout, auto_sync
             FROM vaults
             ORDER BY name
             "#,
@@ -92,7 +102,7 @@ where
     async fn default_vault(&self) -> Result<Option<Vault>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, is_default, created_at, backend_config, recipients, lock_timeout, auto_sync
+            SELECT id, name, is_default, created_at, backend_type, backend_config, recipients, lock_timeout, auto_sync
             FROM vaults
             WHERE is_default = 1
             LIMIT 1

@@ -103,7 +103,7 @@ where
     pub(crate) async fn seed_vault_for_test(&self, vault_id: uuid::Uuid) -> Result<()> {
         sqlx::query(
             "INSERT INTO vaults (id, name, is_default, created_at, backend_type, backend_config, recipients, auto_sync)
-             VALUES (?, ?, 0, ?, 'sqlite', '{}', '[]', 0)",
+             VALUES (?, ?, 0, ?, 'none', '{}', '[]', 0)",
         )
         .bind(vault_id.to_string())
         .bind(vault_id.to_string()) // use id as name to keep it unique
