@@ -35,6 +35,7 @@ use rat_focus::{Focus, FocusBuilder};
 use rat_popup::Placement;
 use rat_widget::choice::{Choice, ChoiceState};
 use rat_widget::event::ChoiceOutcome;
+use rat_widget::text::HasScreenCursor;
 use rat_widget::text_input::{TextInput, TextInputState};
 use rat_widget::textarea::{TextArea, TextAreaState};
 use ratatui::crossterm::event::{
@@ -43,8 +44,9 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -61,6 +63,14 @@ pub enum FormAction {
     Confirm(Entry),
     ValidationError(String),
     Cancel,
+    ConfirmDiscard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValidationIssue {
+    EmptyName,
+    EmptyKey(usize),
+    DuplicateKey(usize),
 }
 
 // ── FormFieldType ─────────────────────────────────────────────────────────────
@@ -175,6 +185,9 @@ struct FormField {
     type_state: ChoiceState<usize>,
     /// TextAreaState for Notes fields — `Some` when field_type is Notes, `None` otherwise.
     textarea_state: Option<TextAreaState>,
+    /// Whether the user has typed in the key slot. Used to avoid flagging
+    /// newly-added blank fields as validation errors immediately.
+    touched: bool,
 }
 
 impl FormField {
@@ -185,11 +198,16 @@ impl FormField {
             field_type: FormFieldType::Text,
             type_state: ChoiceState::named("type"),
             textarea_state: None,
+            touched: false,
         }
     }
 }
 
 // ── EntryForm ─────────────────────────────────────────────────────────────────
+
+/// Snapshot of the original entry for dirty-state tracking.
+/// `(name, Vec<(key, value, field_type)>)`.
+type OriginalSnapshot = (String, Vec<(String, String, FormFieldType)>);
 
 pub struct EntryForm {
     mode: FormMode,
@@ -197,10 +215,27 @@ pub struct EntryForm {
     vault_id: Uuid,
     name_state: TextInputState,
     fields: Vec<FormField>,
-    focus: Option<Focus>,
+    focus: Focus,
     /// Pending high-level action set during HandleEvent handling.
     /// Consumed by `handle_key` to return the appropriate `FormAction`.
     pending_action: FormAction,
+    /// Scroll offset for field list — how many fields are scrolled past the top.
+    /// The name field is always visible (pinned at top, not part of scroll range).
+    pub scroll_offset: usize,
+    /// Last known visible rows count, updated during render().
+    /// Used by auto_scroll_after_tab() and add_field() to determine
+    /// how many field rows fit in the current overlay area.
+    pub last_visible_rows: usize,
+    /// Indices of fields whose secret value is currently shown in plaintext.
+    /// Auto-revealed on focus, auto-unrevealed on focus leave.
+    /// Can be toggled manually with Ctrl-r.
+    pub revealed_secret_fields: HashSet<usize>,
+    /// Snapshot of the original entry for dirty-state tracking.
+    /// `None` for Add mode; `Some((name, fields))` for Edit mode.
+    original: Option<OriginalSnapshot>,
+    /// Validation errors detected after the most recent key event.
+    /// Updated by `validate()` at the end of every `handle_event_inner()` call.
+    pub validation_errors: HashSet<ValidationIssue>,
 }
 
 /// Identifies which slot kind is currently focused, without requiring &mut self.
@@ -227,8 +262,13 @@ impl EntryForm {
             vault_id: Uuid::nil(),
             name_state,
             fields: Vec::new(),
-            focus: None,
+            focus: Focus::default(),
             pending_action: FormAction::None,
+            scroll_offset: 0,
+            last_visible_rows: 20,
+            revealed_secret_fields: HashSet::new(),
+            original: None,
+            validation_errors: HashSet::new(),
         }
     }
 
@@ -268,6 +308,7 @@ impl EntryForm {
                     field_type,
                     type_state,
                     textarea_state,
+                    touched: true,
                 }
             })
             .collect();
@@ -276,14 +317,43 @@ impl EntryForm {
         name_state.set_text(&entry.name);
         name_state.set_cursor(name_state.len(), false);
         name_state.focus.set(true);
+
+        // Build original snapshot for dirty-state tracking.
+        let original_name = entry.name.clone();
+        let original_fields: Vec<(String, String, FormFieldType)> = entry
+            .fields
+            .iter()
+            .map(|f| {
+                let value = match &f.value {
+                    FieldValue::Text(s)
+                    | FieldValue::Hidden(s)
+                    | FieldValue::Url(s)
+                    | FieldValue::Email(s) => s.clone(),
+                    FieldValue::Boolean(b) => b.to_string(),
+                    FieldValue::Number(n) => n.to_string(),
+                    FieldValue::Date(ts) => ts.to_string(),
+                };
+                (
+                    f.key.clone(),
+                    value,
+                    FormFieldType::from_domain(&f.field_type),
+                )
+            })
+            .collect();
+
         Self {
             mode: FormMode::Edit,
             entry_id: entry.id,
             vault_id: entry.vault_id,
             name_state,
             fields,
-            focus: None,
+            focus: Focus::default(),
             pending_action: FormAction::None,
+            scroll_offset: 0,
+            last_visible_rows: 20,
+            revealed_secret_fields: HashSet::new(),
+            original: Some((original_name, original_fields)),
+            validation_errors: HashSet::new(),
         }
     }
 
@@ -429,13 +499,134 @@ impl EntryForm {
         }
     }
 
+    /// Whether the form has unsaved changes.
+    ///
+    /// For Add mode (`original == None`): dirty if name is non-empty OR any field
+    /// has a non-empty key or value.
+    ///
+    /// For Edit mode (`original == Some(...)`): dirty if the current name, field
+    /// count, or any field's key/value/type differs from the original snapshot.
+    pub fn is_dirty(&self) -> bool {
+        match &self.original {
+            None => {
+                // Add mode: dirty if name is non-empty or any field exists.
+                if !self.name_state.text().is_empty() {
+                    return true;
+                }
+                if !self.fields.is_empty() {
+                    return true;
+                }
+                false
+            }
+            Some((orig_name, orig_fields)) => {
+                // Edit mode: compare current state to original snapshot.
+                if self.name_state.text() != orig_name {
+                    return true;
+                }
+                if self.fields.len() != orig_fields.len() {
+                    return true;
+                }
+                for (i, f) in self.fields.iter().enumerate() {
+                    let (ref orig_key, ref orig_value, ref orig_type) = &orig_fields[i];
+                    if f.key_state.text() != orig_key {
+                        return true;
+                    }
+                    if self.field_value_text(f) != *orig_value {
+                        return true;
+                    }
+                    if f.field_type != *orig_type {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    /// Get the current text value of a field, handling TextAreaState for Notes.
+    fn field_value_text(&self, f: &FormField) -> String {
+        if let Some(state) = f.textarea_state.as_ref() {
+            state.text().to_string()
+        } else {
+            f.value_state.text().to_string()
+        }
+    }
+
+    /// Re-run validation and update `validation_errors`.
+    /// Called at the end of every `handle_event_inner()` call.
+    fn validate(&mut self) {
+        self.validation_errors.clear();
+
+        // Name must not be empty.
+        if self.name_state.text().is_empty() {
+            self.validation_errors.insert(ValidationIssue::EmptyName);
+        }
+
+        // Check each field for empty keys (only if touched) and duplicate keys.
+        for (i, f) in self.fields.iter().enumerate() {
+            if f.key_state.text().is_empty() && f.touched {
+                self.validation_errors.insert(ValidationIssue::EmptyKey(i));
+            }
+        }
+
+        // Check for duplicate keys.
+        for (i, f) in self.fields.iter().enumerate() {
+            if !f.key_state.text().is_empty() {
+                for (j, f2) in self.fields.iter().enumerate() {
+                    if i != j && f.key_state.text() == f2.key_state.text() {
+                        self.validation_errors
+                            .insert(ValidationIssue::DuplicateKey(i));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether the form has any validation errors.
+    pub fn has_validation_errors(&self) -> bool {
+        !self.validation_errors.is_empty()
+    }
+
+    /// A short human-readable summary of the first validation error.
+    pub fn validation_error_summary(&self) -> String {
+        if self.validation_errors.contains(&ValidationIssue::EmptyName) {
+            return "Name must not be empty".to_string();
+        }
+        let empty_keys = self
+            .validation_errors
+            .iter()
+            .filter(|e| matches!(e, ValidationIssue::EmptyKey(_)))
+            .count();
+        if empty_keys > 0 {
+            return format!(
+                "{empty_keys} field{} need keys",
+                if empty_keys > 1 { "s" } else { "" }
+            );
+        }
+        let dupes = self
+            .validation_errors
+            .iter()
+            .filter(|e| matches!(e, ValidationIssue::DuplicateKey(_)))
+            .count();
+        if dupes > 0 {
+            return format!("{dupes} duplicate key{}", if dupes > 1 { "s" } else { "" });
+        }
+        String::new()
+    }
+
+    /// Public accessor for validation errors (used in tests).
+    pub fn validation_errors(&self) -> &HashSet<ValidationIssue> {
+        &self.validation_errors
+    }
+
     // ── focus helpers ─────────────────────────────────────────────────────────
 
     /// Rebuild the Focus container from the current widget list.
     /// Recycles storage from the previous Focus to avoid reallocation.
     fn rebuild_focus(&mut self) -> &mut Focus {
-        let old = self.focus.take();
-        let mut fb = FocusBuilder::new(old);
+        let old = std::mem::take(&mut self.focus);
+        let mut fb = FocusBuilder::new(Some(old));
         fb.widget(&self.name_state);
         for ff in &self.fields {
             fb.widget(&ff.key_state);
@@ -448,8 +639,8 @@ impl EntryForm {
             }
             fb.widget(&ff.type_state);
         }
-        self.focus = Some(fb.build());
-        self.focus.as_mut().unwrap()
+        self.focus = fb.build();
+        &mut self.focus
     }
 
     fn focused_slot_kind(&self) -> SlotKind {
@@ -480,15 +671,28 @@ impl EntryForm {
 
     /// Thin wrapper around `HandleEvent` — preserves the public API so
     /// `app.rs` and all tests work unchanged.
+    ///
+    /// Converts BackTab → Tab+SHIFT so rat-focus can match it. All other
+    /// modifiers are stripped. Ctrl-r reveal toggle is NOT handled here —
+    /// use `handle_key_with_modifiers` for that.
     pub fn handle_key(&mut self, key: KeyCode) -> FormAction {
-        // Convert BackTab → Tab+SHIFT so rat-focus can match it.
-        let (focus_key, focus_mods) = match key {
-            KeyCode::BackTab => (KeyCode::Tab, KeyModifiers::SHIFT),
-            _ => (key, KeyModifiers::empty()),
+        let modifiers = match key {
+            KeyCode::BackTab => KeyModifiers::SHIFT,
+            _ => KeyModifiers::empty(),
         };
+        self.handle_key_with_modifiers(key, modifiers)
+    }
+
+    /// Handle a key event with full modifier info.
+    /// Used by app.rs to pass Ctrl-r for toggle reveal.
+    pub fn handle_key_with_modifiers(
+        &mut self,
+        key: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> FormAction {
         let event = Event::Key(KeyEvent::new_with_kind_and_state(
-            focus_key,
-            focus_mods,
+            key,
+            modifiers,
             KeyEventKind::Press,
             KeyEventState::NONE,
         ));
@@ -501,6 +705,10 @@ impl EntryForm {
     /// Route an event to the appropriate slot handler based on focus.
     /// Structured for future delegation to rat-widget widgets.
     fn handle_event_inner(&mut self, event: &Event) -> Outcome {
+        // Re-run validation before every event so visual feedback is immediate
+        // and confirm() has up-to-date validation_errors.
+        self.validate();
+
         // 1. Handle Tab/BackTab navigation directly.
         //    We call Focus::next()/prev() instead of Focus::handle() to avoid
         //    delegating the event to the focused widget (e.g. TextInputState),
@@ -517,22 +725,31 @@ impl EntryForm {
                     && !ke.modifiers.contains(KeyModifiers::SHIFT)
                     && self.rebuild_focus().next_force()
                 {
+                    self.sync_reveal_state();
+                    self.auto_scroll_after_tab();
+                    self.sync_cursor_after_tab();
                     return Outcome::Changed;
                 }
                 if (ke.code == KeyCode::BackTab || is_shift_tab)
                     && self.rebuild_focus().prev_force()
                 {
+                    self.sync_reveal_state();
+                    self.auto_scroll_after_tab();
+                    self.sync_cursor_after_tab();
                     return Outcome::Changed;
                 }
             }
         }
 
         // 2. Route to the focused slot handler.
-        match self.focused_slot_kind() {
+        let outcome = match self.focused_slot_kind() {
             SlotKind::Name => self.handle_name_event(event),
             SlotKind::Type(i) => self.handle_type_event(event, i),
             SlotKind::Key(i) | SlotKind::Value(i) => self.handle_text_event(event, i),
-        }
+        };
+        // Re-run validation after every event so visual feedback is immediate.
+        self.validate();
+        outcome
     }
 
     /// Handle events when focused on the name slot.
@@ -541,7 +758,12 @@ impl EntryForm {
             if ke.kind == KeyEventKind::Press {
                 match ke.code {
                     KeyCode::Esc => {
-                        self.pending_action = FormAction::Cancel;
+                        self.pending_action = if self.is_dirty() {
+                            FormAction::ConfirmDiscard
+                        } else {
+                            FormAction::Cancel
+                        };
+                        self.revealed_secret_fields.clear();
                         return Outcome::Changed;
                     }
                     KeyCode::Enter => {
@@ -571,39 +793,41 @@ impl EntryForm {
     /// 4. Popup closed → delegate remaining events to ChoiceState (Space toggles popup).
     fn handle_type_event(&mut self, event: &Event, idx: usize) -> Outcome {
         // 1. If popup is open, handle navigation and delegation
-        if let Some(f) = self.fields.get(idx) {
-            if f.type_state.is_popup_active() {
-                // Intercept j/k/Up/Down for navigation (ChoiceState treats j/k as char search)
-                if let Event::Key(ke) = event {
-                    if ke.kind == KeyEventKind::Press {
-                        let count = ALL_VARIANTS.len();
-                        match ke.code {
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                let f = self.fields.get_mut(idx).unwrap();
+        if idx < self.fields.len() && self.fields[idx].type_state.is_popup_active() {
+            // Intercept j/k/Up/Down for navigation (ChoiceState treats j/k as char search)
+            if let Event::Key(ke) = event {
+                if ke.kind == KeyEventKind::Press {
+                    let count = ALL_VARIANTS.len();
+                    match ke.code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if let Some(f) = self.fields.get_mut(idx) {
                                 let cur = f.type_state.value();
                                 let next = (cur + 1) % count;
                                 f.type_state.set_value(next);
-                                return Outcome::Changed;
                             }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                let f = self.fields.get_mut(idx).unwrap();
+                            return Outcome::Changed;
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if let Some(f) = self.fields.get_mut(idx) {
                                 let cur = f.type_state.value();
                                 let prev = if cur == 0 { count - 1 } else { cur - 1 };
                                 f.type_state.set_value(prev);
-                                return Outcome::Changed;
                             }
-                            KeyCode::Esc => {
-                                // Esc closes popup without applying selection
-                                let f = self.fields.get_mut(idx).unwrap();
-                                f.type_state.set_popup_active(false);
-                                return Outcome::Changed;
-                            }
-                            _ => {}
+                            return Outcome::Changed;
                         }
+                        KeyCode::Esc => {
+                            // Esc closes popup without applying selection
+                            if let Some(f) = self.fields.get_mut(idx) {
+                                f.type_state.set_popup_active(false);
+                            }
+                            return Outcome::Changed;
+                        }
+                        _ => {}
                     }
                 }
-                // Delegate remaining events to ChoiceState (Enter closes popup, etc.)
-                let f = self.fields.get_mut(idx).unwrap();
+            }
+            // Delegate remaining events to ChoiceState (Enter closes popup, etc.)
+            if let Some(f) = self.fields.get_mut(idx) {
                 let _: ChoiceOutcome = f.type_state.handle(event, Regular);
                 if !f.type_state.is_popup_active() {
                     let selected = f.type_state.value();
@@ -612,8 +836,8 @@ impl EntryForm {
                         self.ensure_textarea(idx);
                     }
                 }
-                return Outcome::Changed;
             }
+            return Outcome::Changed;
         }
 
         // 2. Popup closed — intercept form-level keys
@@ -621,7 +845,12 @@ impl EntryForm {
             if ke.kind == KeyEventKind::Press {
                 match ke.code {
                     KeyCode::Esc => {
-                        self.pending_action = FormAction::Cancel;
+                        self.pending_action = if self.is_dirty() {
+                            FormAction::ConfirmDiscard
+                        } else {
+                            FormAction::Cancel
+                        };
+                        self.revealed_secret_fields.clear();
                         return Outcome::Changed;
                     }
                     KeyCode::Enter => {
@@ -689,7 +918,12 @@ impl EntryForm {
                     if let Some(state) = f.textarea_state.as_mut() {
                         if matches!(event, Event::Key(ke) if ke.kind == KeyEventKind::Press && ke.code == KeyCode::Esc)
                         {
-                            self.pending_action = FormAction::Cancel;
+                            self.pending_action = if self.is_dirty() {
+                                FormAction::ConfirmDiscard
+                            } else {
+                                FormAction::Cancel
+                            };
+                            self.revealed_secret_fields.clear();
                             return Outcome::Changed;
                         }
                         let outcome: Outcome = state.handle(event, Regular).into();
@@ -704,7 +938,12 @@ impl EntryForm {
             if ke.kind == KeyEventKind::Press {
                 match ke.code {
                     KeyCode::Esc => {
-                        self.pending_action = FormAction::Cancel;
+                        self.pending_action = if self.is_dirty() {
+                            FormAction::ConfirmDiscard
+                        } else {
+                            FormAction::Cancel
+                        };
+                        self.revealed_secret_fields.clear();
                         return Outcome::Changed;
                     }
                     KeyCode::Enter => {
@@ -719,6 +958,21 @@ impl EntryForm {
                         self.remove_focused_field();
                         return Outcome::Changed;
                     }
+                    // Ctrl-r toggles reveal on the currently focused obscured value slot
+                    KeyCode::Char('r') if ke.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let SlotKind::Value(i) = slot {
+                            if let Some(f) = self.fields.get(i) {
+                                if f.field_type.is_obscured() {
+                                    if self.revealed_secret_fields.contains(&i) {
+                                        self.revealed_secret_fields.remove(&i);
+                                    } else {
+                                        self.revealed_secret_fields.insert(i);
+                                    }
+                                    return Outcome::Changed;
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -728,6 +982,18 @@ impl EntryForm {
         if let Some(f) = self.fields.get_mut(idx) {
             match slot {
                 SlotKind::Key(_) => {
+                    // Mark the field as touched when the user types in the key slot.
+                    // This prevents newly-added blank fields from being flagged immediately.
+                    if let Event::Key(ke) = event {
+                        if ke.kind == KeyEventKind::Press
+                            && matches!(
+                                ke.code,
+                                KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
+                            )
+                        {
+                            f.touched = true;
+                        }
+                    }
                     return f.key_state.handle(event, Regular).into();
                 }
                 SlotKind::Value(_) => {
@@ -757,6 +1023,11 @@ impl EntryForm {
         let new_field = FormField::empty();
         new_field.key_state.focus.set(true);
         self.fields.push(new_field);
+        // Scroll to show the new field if there are more fields than visible.
+        let visible = self.last_visible_rows.max(1);
+        if self.fields.len() > visible {
+            self.scroll_offset = self.fields.len().saturating_sub(visible);
+        }
     }
 
     /// Ensure the TextAreaState for a Notes field is initialised (or cleaned up
@@ -789,18 +1060,47 @@ impl EntryForm {
         };
         if field_idx < self.fields.len() {
             self.fields.remove(field_idx);
+            // Adjust scroll_offset to avoid empty space at the end.
+            let visible = self.last_visible_rows.max(1);
+            if self.fields.len() > visible {
+                let max_scroll = self.fields.len() - visible;
+                if self.scroll_offset > max_scroll {
+                    self.scroll_offset = max_scroll;
+                }
+            } else {
+                self.scroll_offset = 0;
+            }
             // Set focus to name field
             self.name_state.focus.set(true);
         }
     }
 
     pub fn confirm(&mut self) -> FormAction {
-        // Close any open type popups
+        // Clear reveal state before constructing the Entry.
+        self.revealed_secret_fields.clear();
+        // Close any open type popups and sync field_type from Choice widget.
         for f in &mut self.fields {
             f.type_state.set_popup_active(false);
+            let selected = f.type_state.value();
+            if let Some(new_type) = ALL_VARIANTS.get(selected) {
+                f.field_type = new_type.clone();
+            }
         }
-        if self.name_state.text().trim().is_empty() {
-            return FormAction::ValidationError("Name must not be empty".to_string());
+        if !self.validation_errors.is_empty() {
+            let messages: Vec<String> = self
+                .validation_errors
+                .iter()
+                .map(|e| match e {
+                    ValidationIssue::EmptyName => "Name must not be empty".to_string(),
+                    ValidationIssue::EmptyKey(i) => {
+                        format!("Field {} key must not be empty", i + 1)
+                    }
+                    ValidationIssue::DuplicateKey(i) => {
+                        format!("Field {} has a duplicate key", i + 1)
+                    }
+                })
+                .collect();
+            return FormAction::ValidationError(messages.join("; "));
         }
         let now = Utc::now().timestamp();
         let domain_fields: Vec<Field> = self
@@ -836,13 +1136,106 @@ impl EntryForm {
         })
     }
 
+    // ── scrolling ────────────────────────────────────────────────────────────
+
+    /// Calculate how many field rows fit in the given area.
+    /// Each field row is 3 lines. Name takes 3 lines, hint bar takes 1 line.
+    fn visible_rows(&self, inner_height: u16) -> usize {
+        let available = inner_height.saturating_sub(3 + 1); // name(3) + hint(1)
+        (available / 3) as usize
+    }
+
+    /// After Tab/BackTab navigation, sync the reveal state so that only the
+    /// currently focused obscured value slot is revealed. All other fields are
+    /// hidden. This implements auto-reveal on focus and auto-unreveal on leave.
+    fn sync_reveal_state(&mut self) {
+        // Collect indices of all currently focused obscured value slots.
+        // There should be at most one, but we handle the general case.
+        let mut to_reveal = HashSet::new();
+        for (i, f) in self.fields.iter().enumerate() {
+            let value_focused = if f.field_type == FormFieldType::Notes {
+                f.textarea_state.as_ref().is_some_and(|s| s.focus.get())
+            } else {
+                f.value_state.focus.get()
+            };
+            if value_focused && f.field_type.is_obscured() {
+                to_reveal.insert(i);
+            }
+        }
+        self.revealed_secret_fields = to_reveal;
+    }
+
+    /// After Tab/BackTab navigation, adjust scroll_offset so the focused field
+    /// is visible. Name slot is always visible (not part of scroll range).
+    /// Uses last_visible_rows (updated during render()) to determine how many
+    /// field rows fit in the current overlay area.
+    fn auto_scroll_after_tab(&mut self) {
+        let visible = self.last_visible_rows.max(1);
+        match self.focused_slot_kind() {
+            SlotKind::Name => {
+                // Name is always visible, scroll to top
+                self.scroll_offset = 0;
+            }
+            SlotKind::Key(i) | SlotKind::Value(i) | SlotKind::Type(i) => {
+                if i < self.scroll_offset {
+                    // Focused field is above visible range
+                    self.scroll_offset = i;
+                } else if i >= self.scroll_offset + visible {
+                    // Focused field is below visible range
+                    self.scroll_offset = i.saturating_sub(visible - 1);
+                }
+            }
+        }
+    }
+
+    /// After Tab/BackTab navigation, set the cursor to the end of the text
+    /// in the newly focused slot and clear the overwrite flag.
+    /// This prevents the TextInputState from replacing existing text when the
+    /// user types a character (TextFocusGained::Overwrite default behavior).
+    fn sync_cursor_after_tab(&mut self) {
+        match self.focused_slot_kind() {
+            SlotKind::Value(i) => {
+                if let Some(f) = self.fields.get_mut(i) {
+                    if f.field_type == FormFieldType::Notes {
+                        if let Some(state) = f.textarea_state.as_mut() {
+                            let len = state.text().len();
+                            state.set_cursor((0, len as u32), false);
+                        }
+                    } else {
+                        let len = f.value_state.len();
+                        f.value_state.set_cursor(len, false);
+                        f.value_state.set_overwrite(false);
+                    }
+                }
+            }
+            SlotKind::Key(i) => {
+                if let Some(f) = self.fields.get_mut(i) {
+                    let len = f.key_state.len();
+                    f.key_state.set_cursor(len, false);
+                    f.key_state.set_overwrite(false);
+                }
+            }
+            SlotKind::Name => {
+                let len = self.name_state.len();
+                self.name_state.set_cursor(len, false);
+                self.name_state.set_overwrite(false);
+            }
+            SlotKind::Type(_) => {}
+        }
+    }
+
     // ── rendering ─────────────────────────────────────────────────────────────
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+        let dirty_mark = if self.is_dirty() { " *" } else { "" };
         let title = match self.mode {
-            FormMode::Add => " New Entry ",
-            FormMode::Edit => " Edit Entry ",
+            FormMode::Add => format!(" New Entry{dirty_mark} "),
+            FormMode::Edit => format!(" Edit Entry{dirty_mark} "),
         };
+
+        // Clear the area first to prevent background content from showing through.
+        frame.render_widget(Clear, area);
+
         let outer = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
@@ -850,9 +1243,24 @@ impl EntryForm {
         let inner = outer.inner(area);
         frame.render_widget(outer, area);
 
-        // Rows: name + one row per field + hint bar.
+        // Calculate visible field rows based on available height.
+        let visible = self.visible_rows(inner.height);
+        self.last_visible_rows = visible;
+
+        // Clamp scroll_offset to valid range.
+        if self.fields.len() > visible {
+            self.scroll_offset = self.scroll_offset.min(self.fields.len() - visible);
+        } else {
+            self.scroll_offset = 0;
+        }
+
+        // Determine which fields to render.
+        let end = (self.scroll_offset + visible).min(self.fields.len());
+        let visible_fields = &mut self.fields[self.scroll_offset..end];
+
+        // Rows: name + one row per visible field + hint bar.
         // All rows are fixed at 3 lines.
-        let row_count = 1 + self.fields.len() + 1;
+        let row_count = 1 + visible_fields.len() + 1;
         let constraints: Vec<Constraint> = (0..row_count)
             .map(|i| {
                 if i == row_count - 1 {
@@ -870,6 +1278,17 @@ impl EntryForm {
 
         // Row 0: name
         let name_focused = self.name_state.focus.get();
+        let name_has_error = self.validation_errors.contains(&ValidationIssue::EmptyName);
+        let name_border_color = if name_has_error {
+            Color::Red
+        } else {
+            Color::default()
+        };
+        let name_title = if name_has_error {
+            " Name ⚠ "
+        } else {
+            " Name "
+        };
         let name_widget = TextInput::new()
             .style(Style::default())
             .focus_style(
@@ -885,13 +1304,22 @@ impl EntryForm {
                     } else {
                         BorderType::Plain
                     })
-                    .title(" Name "),
+                    .border_style(Style::default().fg(name_border_color))
+                    .title(name_title),
             );
         frame.render_stateful_widget(name_widget, rows[0], &mut self.name_state);
+        if self.name_state.focus.get() {
+            if let Some((cx, cy)) = self.name_state.screen_cursor() {
+                frame.set_cursor_position((
+                    self.name_state.inner.x + cx,
+                    self.name_state.inner.y + cy,
+                ));
+            }
+        }
 
         // Rows 1..: fields — [key 35%] [value 50%] [type 15%]
-        for (i, ff) in self.fields.iter_mut().enumerate() {
-            if let Some(row) = rows.get(i + 1) {
+        for (rel_i, ff) in visible_fields.iter_mut().enumerate() {
+            if let Some(row) = rows.get(rel_i + 1) {
                 let cols = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
@@ -903,6 +1331,19 @@ impl EntryForm {
 
                 // Key
                 let key_f = ff.key_state.focus.get();
+                let abs_i = self.scroll_offset + rel_i;
+                let key_has_error = self
+                    .validation_errors
+                    .contains(&ValidationIssue::EmptyKey(abs_i))
+                    || self
+                        .validation_errors
+                        .contains(&ValidationIssue::DuplicateKey(abs_i));
+                let key_border_color = if key_has_error {
+                    Color::Red
+                } else {
+                    Color::default()
+                };
+                let key_title = if key_has_error { " Key ⚠ " } else { " Key " };
                 let key_widget = TextInput::new()
                     .style(Style::default())
                     .focus_style(
@@ -918,9 +1359,18 @@ impl EntryForm {
                             } else {
                                 BorderType::Plain
                             })
-                            .title(" Key "),
+                            .border_style(Style::default().fg(key_border_color))
+                            .title(key_title),
                     );
                 frame.render_stateful_widget(key_widget, cols[0], &mut ff.key_state);
+                if key_f {
+                    if let Some((cx, cy)) = ff.key_state.screen_cursor() {
+                        frame.set_cursor_position((
+                            ff.key_state.inner.x + cx,
+                            ff.key_state.inner.y + cy,
+                        ));
+                    }
+                }
 
                 // Value — badge in title shows the field type label
                 let val_f = if ff.field_type == FormFieldType::Notes {
@@ -929,7 +1379,14 @@ impl EntryForm {
                     ff.value_state.focus.get()
                 };
                 let badge = ff.field_type.label();
-                let value_title = format!(" Value {badge} ");
+                let is_revealed = self
+                    .revealed_secret_fields
+                    .contains(&(self.scroll_offset + rel_i));
+                let value_title = if is_revealed {
+                    format!(" Value {badge} [revealed] ")
+                } else {
+                    format!(" Value {badge} ")
+                };
                 if ff.field_type == FormFieldType::Notes {
                     // Render a TextArea widget for Notes fields
                     if let Some(state) = ff.textarea_state.as_mut() {
@@ -952,6 +1409,11 @@ impl EntryForm {
                                     .title(value_title),
                             );
                         frame.render_stateful_widget(textarea, cols[1], state);
+                        if val_f {
+                            if let Some((cx, cy)) = state.screen_cursor() {
+                                frame.set_cursor_position((state.inner.x + cx, state.inner.y + cy));
+                            }
+                        }
                     } else {
                         // Fallback: render as plain text if TextAreaState is missing
                         let val_widget = TextInput::new()
@@ -972,10 +1434,20 @@ impl EntryForm {
                                     .title(value_title),
                             );
                         frame.render_stateful_widget(val_widget, cols[1], &mut ff.value_state);
+                        if val_f {
+                            if let Some((cx, cy)) = ff.value_state.screen_cursor() {
+                                frame.set_cursor_position((
+                                    ff.value_state.inner.x + cx,
+                                    ff.value_state.inner.y + cy,
+                                ));
+                            }
+                        }
                     }
                 } else if ff.field_type.is_obscured() {
-                    let val_widget = TextInput::new()
-                        .passwd()
+                    let is_revealed = self
+                        .revealed_secret_fields
+                        .contains(&(self.scroll_offset + rel_i));
+                    let mut val_widget = TextInput::new()
                         .style(Style::default())
                         .focus_style(
                             Style::default()
@@ -992,7 +1464,18 @@ impl EntryForm {
                                 })
                                 .title(value_title),
                         );
+                    if !is_revealed {
+                        val_widget = val_widget.passwd();
+                    }
                     frame.render_stateful_widget(val_widget, cols[1], &mut ff.value_state);
+                    if val_f {
+                        if let Some((cx, cy)) = ff.value_state.screen_cursor() {
+                            frame.set_cursor_position((
+                                ff.value_state.inner.x + cx,
+                                ff.value_state.inner.y + cy,
+                            ));
+                        }
+                    }
                 } else {
                     let val_widget = TextInput::new()
                         .style(Style::default())
@@ -1012,6 +1495,14 @@ impl EntryForm {
                                 .title(value_title),
                         );
                     frame.render_stateful_widget(val_widget, cols[1], &mut ff.value_state);
+                    if val_f {
+                        if let Some((cx, cy)) = ff.value_state.screen_cursor() {
+                            frame.set_cursor_position((
+                                ff.value_state.inner.x + cx,
+                                ff.value_state.inner.y + cy,
+                            ));
+                        }
+                    }
                 }
 
                 // Type cell — uses rat-widget Choice for the selector.
@@ -1071,11 +1562,18 @@ impl EntryForm {
             }
         }
 
-        // Hint bar — field management keys only (context hints are in the status bar)
+        // Hint bar — field management keys + scroll indicators
         if let Some(hint_row) = rows.last() {
+            let mut hint_text = " [+] add field  [-] remove field ".to_string();
+            if self.scroll_offset > 0 {
+                hint_text.push_str(" ↑ ");
+            }
+            if end < self.fields.len() {
+                hint_text.push_str(" ↓ ");
+            }
             frame.render_widget(
                 Paragraph::new(Line::from(vec![Span::styled(
-                    " [+] add field  [-] remove field ",
+                    hint_text,
                     Style::default().fg(Color::DarkGray),
                 )])),
                 *hint_row,

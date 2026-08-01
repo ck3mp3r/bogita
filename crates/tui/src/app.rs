@@ -9,7 +9,7 @@ use bogita_core::app::App;
 use bogita_core::domain::Entry;
 use bogita_core::error::Result;
 use bogita_core::service::clipboard::{ArboardBackend, ClipboardService};
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -31,8 +31,13 @@ enum ActiveView {
     /// Add/edit form rendered in Col 3.
     Form(EntryForm),
     /// Confirm-save modal for edit mode — shown after Enter or Esc on the edit form.
-    /// The form is kept so [Esc] can return to it, and [y] can re-confirm to get the entry.
+    /// The form is kept so [Esc] can return to it, and [s] can re-confirm to get the entry.
     ConfirmSave {
+        form: EntryForm,
+    },
+    /// Discard confirmation modal — shown after Esc on a dirty form.
+    /// The form is kept so [b/Esc] can return to it, and [d] can discard changes.
+    ConfirmDiscard {
         form: EntryForm,
     },
     /// Delete confirmation modal overlay.
@@ -85,6 +90,47 @@ enum AppAction {
     },
 }
 
+/// Kind of toast notification — controls color.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ToastKind {
+    Success,
+    Info,
+    Warning,
+}
+
+/// Transient notification message shown briefly after successful actions.
+#[derive(Clone, Debug)]
+pub struct Toast {
+    pub message: String,
+    pub kind: ToastKind,
+    pub created_at: std::time::Instant,
+    pub duration: std::time::Duration,
+}
+
+impl Toast {
+    pub fn success(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: ToastKind::Success,
+            created_at: std::time::Instant::now(),
+            duration: std::time::Duration::from_secs(3),
+        }
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: ToastKind::Warning,
+            created_at: std::time::Instant::now(),
+            duration: std::time::Duration::from_secs(5),
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() >= self.duration
+    }
+}
+
 /// A deferred clipboard copy set by [`Tui::handle_key`] and drained by
 /// [`Tui::flush_pending`]. Kept separate from `AppAction` so the clipboard
 /// path never blocks a vault mutation and vice-versa.
@@ -106,6 +152,8 @@ pub struct Tui {
     pub error_message: Option<String>,
     /// Currently selected entry, fetched and decrypted on demand when selection changes.
     pub detail_entry: Option<Entry>,
+    /// Transient toast notification shown after successful actions.
+    pub toast: Option<Toast>,
 }
 
 impl Tui {
@@ -142,7 +190,18 @@ impl Tui {
             pending_copy: None,
             error_message: None,
             detail_entry,
+            toast: None,
         })
+    }
+
+    /// Show a transient toast notification.
+    pub(crate) fn show_toast(&mut self, message: impl Into<String>, kind: ToastKind) {
+        let toast = match kind {
+            ToastKind::Success => Toast::success(message),
+            ToastKind::Warning => Toast::warning(message),
+            ToastKind::Info => Toast::success(message), // Info uses same duration as Success
+        };
+        self.toast = Some(toast);
     }
 
     /// Run the TUI event loop.
@@ -159,20 +218,113 @@ impl Tui {
             if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        self.handle_key(key.code);
+                        self.handle_key_with_modifiers(key.code, key.modifiers);
                         self.flush_pending().await?;
                     }
                 }
             }
+            // Auto-dismiss expired toasts
+            if self.toast.as_ref().is_some_and(|t| t.is_expired()) {
+                self.toast = None;
+            }
         }
         Ok(())
+    }
+
+    /// Handle a key press with full modifier info.
+    /// Used by the event loop to pass Ctrl-r to the form.
+    pub(crate) fn handle_key_with_modifiers(&mut self, key: KeyCode, modifiers: KeyModifiers) {
+        // Error overlay: [Esc] or [Enter] dismisses.
+        if self.error_message.is_some() {
+            if matches!(key, KeyCode::Esc | KeyCode::Enter) {
+                self.error_message = None;
+            }
+            return;
+        }
+
+        match &mut self.active {
+            ActiveView::Form(f) => {
+                // [g] on a token slot (obscured value) opens the password generator.
+                if key == KeyCode::Char('g')
+                    && modifiers.is_empty()
+                    && f.focused_slot_label() == "token"
+                {
+                    let placeholder = EntryForm::new_add(None);
+                    let form = std::mem::replace(f, placeholder);
+                    self.active = ActiveView::PasswordGen {
+                        gen: PasswordGenView::new(),
+                        form,
+                    };
+                    return;
+                }
+                match f.handle_key_with_modifiers(key, modifiers) {
+                    FormAction::Cancel => {
+                        if f.mode() == FormMode::Edit {
+                            let placeholder = EntryForm::new_add(None);
+                            let form = std::mem::replace(f, placeholder);
+                            self.active = ActiveView::ConfirmSave { form };
+                        } else {
+                            self.active = ActiveView::Main;
+                        }
+                    }
+                    FormAction::ConfirmDiscard => {
+                        let placeholder = EntryForm::new_add(None);
+                        let form = std::mem::replace(f, placeholder);
+                        self.active = ActiveView::ConfirmDiscard { form };
+                    }
+                    FormAction::Confirm(_) => {
+                        let mode = f.mode();
+                        if mode == FormMode::Edit {
+                            let placeholder = EntryForm::new_add(None);
+                            let form = std::mem::replace(f, placeholder);
+                            self.active = ActiveView::ConfirmSave { form };
+                        } else {
+                            if let FormAction::Confirm(entry) = f.confirm() {
+                                let select_id = entry.id;
+                                self.pending = Some(AppAction::SaveEntry {
+                                    entry,
+                                    mode,
+                                    select_id,
+                                });
+                            }
+                            self.active = ActiveView::Main;
+                        }
+                    }
+                    FormAction::None | FormAction::ValidationError(_) => {}
+                }
+            }
+            ActiveView::PasswordGen { .. } => {
+                // Destructure by replacing active to get ownership.
+                let ActiveView::PasswordGen { mut gen, form } =
+                    std::mem::replace(&mut self.active, ActiveView::Main)
+                else {
+                    unreachable!()
+                };
+                match gen.handle_key(key) {
+                    PasswordGenAction::Accept(pw) => {
+                        let mut form = form;
+                        form.set_focused_value(pw);
+                        self.active = ActiveView::Form(form);
+                    }
+                    PasswordGenAction::Cancel => {
+                        self.active = ActiveView::Form(form);
+                    }
+                    PasswordGenAction::None => {
+                        self.active = ActiveView::PasswordGen { gen, form };
+                    }
+                }
+            }
+            _ => {
+                self.handle_key(key);
+            }
+        }
     }
 
     /// Render the current frame.
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        // Split into header (1 row) | body (fill) | status bar (1 row)
+        // Split into header (1) | body (fill) | status bar (1)
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -202,11 +354,32 @@ impl Tui {
                 self.main_view
                     .render_detail(frame, col3, self.detail_entry.as_ref());
             }
-            ActiveView::Form(f) => f.render(frame, col3),
+            ActiveView::Form(f) => {
+                // Render main view detail pane behind the overlay.
+                self.main_view
+                    .render_detail(frame, col3, self.detail_entry.as_ref());
+                // Render form as centered overlay on top.
+                let overlay = centered_rect(80, 90, body_area);
+                f.render(frame, overlay);
+            }
             ActiveView::ConfirmSave { form } => {
                 let name = form.name().to_string();
-                form.render(frame, col3);
+                // Render main view detail pane behind the overlay.
+                self.main_view
+                    .render_detail(frame, col3, self.detail_entry.as_ref());
+                // Render form as centered overlay, then confirm modal on top.
+                let overlay = centered_rect(80, 90, body_area);
+                form.render(frame, overlay);
                 render_confirm_save_modal(frame, body_area, &name);
+            }
+            ActiveView::ConfirmDiscard { form } => {
+                // Render main view detail pane behind the overlay.
+                self.main_view
+                    .render_detail(frame, col3, self.detail_entry.as_ref());
+                // Render form as centered overlay, then discard confirm modal on top.
+                let overlay = centered_rect(80, 90, body_area);
+                form.render(frame, overlay);
+                render_confirm_discard_modal(frame, body_area);
             }
             ActiveView::ConfirmDelete { name, .. } => {
                 self.main_view
@@ -214,11 +387,22 @@ impl Tui {
                 render_confirm_delete_modal(frame, body_area, name);
             }
             ActiveView::PasswordGen { gen, form } => {
-                // Form still visible in col3 underneath the popup.
-                form.render(frame, col3);
+                // Render main view detail pane behind the overlay.
+                self.main_view
+                    .render_detail(frame, col3, self.detail_entry.as_ref());
+                // Render form as centered overlay, then gen popup on top.
+                let overlay = centered_rect(80, 90, body_area);
+                form.render(frame, overlay);
                 gen.render(frame, body_area);
             }
-            ActiveView::VaultForm(f) => f.render(frame, col3),
+            ActiveView::VaultForm(f) => {
+                // Render main view detail pane behind the overlay.
+                self.main_view
+                    .render_detail(frame, col3, self.detail_entry.as_ref());
+                // Render vault form as centered overlay.
+                let overlay = centered_rect(80, 90, body_area);
+                f.render(frame, overlay);
+            }
             ActiveView::ConfirmDeleteVault { name, .. } => {
                 self.main_view
                     .render_detail(frame, col3, self.detail_entry.as_ref());
@@ -229,6 +413,11 @@ impl Tui {
         // Error overlay: rendered on top of everything else.
         if let Some(msg) = &self.error_message.clone() {
             render_error_modal(frame, body_area, msg);
+        }
+
+        // Toast notification (rendered on top of everything in the body)
+        if let Some(ref toast) = self.toast {
+            render_toast(frame, body_area, toast);
         }
 
         // Status bar
@@ -244,35 +433,44 @@ impl Tui {
             return "[Esc / Enter] dismiss".to_string();
         }
         match &self.active {
-            ActiveView::ConfirmDelete { .. } => "[y] confirm delete  [n / Esc] cancel".to_string(),
-            ActiveView::ConfirmDeleteVault { .. } => {
-                "[y] confirm delete vault  [n / Esc] cancel".to_string()
-            }
+            ActiveView::ConfirmDelete { .. } => "[d] delete  [c/Esc] cancel".to_string(),
+            ActiveView::ConfirmDeleteVault { .. } => "[d] delete  [c/Esc] cancel".to_string(),
             ActiveView::ConfirmSave { .. } => {
-                "[y] save  [n] discard  [Esc] back to form".to_string()
+                "[s] save  [d] discard  [Esc] back to form".to_string()
             }
+            ActiveView::ConfirmDiscard { .. } => "[d] discard  [b/Esc] back to form".to_string(),
             ActiveView::Form(f) => {
+                let dirty_suffix = if f.is_dirty() {
+                    "  ·  unsaved changes"
+                } else {
+                    ""
+                };
+                let validation_warning = if f.has_validation_errors() {
+                    format!("  ⚠ {}", f.validation_error_summary())
+                } else {
+                    String::new()
+                };
                 let slot = f.focused_slot_label();
                 match slot {
                     "name" => {
-                        "Editing name  ·  [Tab] next field  [Enter] save  [Esc] cancel".to_string()
+                        format!("Editing name  ·  [Tab] next field  [Enter] save  [Esc] cancel{dirty_suffix}{validation_warning}")
                     }
                     "key" => {
                         let n = (f.focused_field().saturating_sub(1)) / 3 + 1;
                         let m = f.field_count();
-                        format!("Editing key (field {n} of {m})  ·  [Tab] next  [Esc] cancel")
+                        format!("Editing key (field {n} of {m})  ·  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}")
                     }
-                    "value" => "Editing value  ·  [Tab] next  [Esc] cancel".to_string(),
+                    "value" => format!("Editing value  ·  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}"),
                     "token" => {
-                        "Editing token  ·  [g] generate  [Tab] next  [Esc] cancel".to_string()
+                        format!("Editing token  ·  [g] generate  [Ctrl-r] toggle reveal  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}")
                     }
                     "type" => {
                         let badge = f.field_badge((f.focused_field().saturating_sub(1)) / 3);
                         format!(
-                            "[j/k] select type  ·  currently: {badge}  ·  [Enter] save  [Tab] next  [Esc] cancel"
+                            "[j/k] select type  ·  currently: {badge}  ·  [Enter] save  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}"
                         )
                     }
-                    _ => "[Tab] next  [Esc] cancel".to_string(),
+                    _ => format!("[Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}"),
                 }
             }
             ActiveView::Main => {
@@ -285,9 +483,7 @@ impl Tui {
                         Column::Entries => {
                             "[a] add  [e] edit  [d] delete  [Esc] cancel".to_string()
                         }
-                        Column::Detail => {
-                            "[Esc] cancel".to_string()
-                        }
+                        Column::Detail => "[Esc] cancel".to_string(),
                     }
                 } else {
                     use crate::views::main_view::Column;
@@ -406,52 +602,7 @@ impl Tui {
                     }
                 },
             },
-            ActiveView::Form(f) => {
-                // [g] on a token slot (obscured value) opens the password generator.
-                if key == KeyCode::Char('g') && f.focused_slot_label() == "token" {
-                    // Swap form out, wrap in PasswordGen view.
-                    let placeholder = EntryForm::new_add(None);
-                    let form = std::mem::replace(f, placeholder);
-                    self.active = ActiveView::PasswordGen {
-                        gen: PasswordGenView::new(),
-                        form,
-                    };
-                    return self.state.clone();
-                }
-                match f.handle_key(key) {
-                    FormAction::Cancel => {
-                        if f.mode() == FormMode::Edit {
-                            // Edit mode: show confirm modal before discarding.
-                            let placeholder = EntryForm::new_add(None);
-                            let form = std::mem::replace(f, placeholder);
-                            self.active = ActiveView::ConfirmSave { form };
-                        } else {
-                            self.active = ActiveView::Main;
-                        }
-                    }
-                    FormAction::Confirm(_) => {
-                        let mode = f.mode();
-                        if mode == FormMode::Edit {
-                            // Edit mode: require confirmation before saving.
-                            let placeholder = EntryForm::new_add(None);
-                            let form = std::mem::replace(f, placeholder);
-                            self.active = ActiveView::ConfirmSave { form };
-                        } else {
-                            // Add mode: build entry and save immediately.
-                            if let FormAction::Confirm(entry) = f.confirm() {
-                                let select_id = entry.id;
-                                self.pending = Some(AppAction::SaveEntry {
-                                    entry,
-                                    mode,
-                                    select_id,
-                                });
-                            }
-                            self.active = ActiveView::Main;
-                        }
-                    }
-                    FormAction::None | FormAction::ValidationError(_) => {}
-                }
-            }
+
             ActiveView::ConfirmSave { .. } => {
                 // Destructure by replacing active to get ownership.
                 let ActiveView::ConfirmSave { mut form } =
@@ -460,7 +611,7 @@ impl Tui {
                     unreachable!()
                 };
                 match key {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    KeyCode::Char('s') | KeyCode::Char('S') => {
                         // Confirm: re-run confirm() to get the entry and save.
                         if let FormAction::Confirm(entry) = form.confirm() {
                             let select_id = entry.id;
@@ -472,7 +623,7 @@ impl Tui {
                         }
                         // self.active already set to Main above
                     }
-                    KeyCode::Char('n') | KeyCode::Char('N') => {
+                    KeyCode::Char('d') | KeyCode::Char('D') => {
                         // Discard changes — go to Main without saving.
                         // self.active already set to Main above
                     }
@@ -486,52 +637,55 @@ impl Tui {
                     }
                 }
             }
+            ActiveView::ConfirmDiscard { .. } => {
+                // Destructure by replacing active to get ownership.
+                let ActiveView::ConfirmDiscard { form } =
+                    std::mem::replace(&mut self.active, ActiveView::Main)
+                else {
+                    unreachable!()
+                };
+                match key {
+                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                        // Discard changes — go to Main without saving.
+                        // self.active already set to Main above
+                    }
+                    KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc => {
+                        // Back to form with edits intact.
+                        self.active = ActiveView::Form(form);
+                    }
+                    _ => {
+                        // Any other key: put it back.
+                        self.active = ActiveView::ConfirmDiscard { form };
+                    }
+                }
+            }
             ActiveView::ConfirmDelete {
                 entry_id, vault_id, ..
             } => match key {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                KeyCode::Char('d') | KeyCode::Char('D') => {
                     self.pending = Some(AppAction::DeleteEntry {
                         entry_id: *entry_id,
                         vault_id: *vault_id,
                     });
                     self.active = ActiveView::Main;
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
                     self.active = ActiveView::Main;
                 }
                 _ => {}
             },
             ActiveView::ConfirmDeleteVault { vault_id, .. } => match key {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    self.pending = Some(AppAction::DeleteVault { vault_id: *vault_id });
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    self.pending = Some(AppAction::DeleteVault {
+                        vault_id: *vault_id,
+                    });
                     self.active = ActiveView::Main;
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
                     self.active = ActiveView::Main;
                 }
                 _ => {}
             },
-            ActiveView::PasswordGen { .. } => {
-                // Destructure by replacing active to get ownership.
-                let ActiveView::PasswordGen { mut gen, form } =
-                    std::mem::replace(&mut self.active, ActiveView::Main)
-                else {
-                    unreachable!()
-                };
-                match gen.handle_key(key) {
-                    PasswordGenAction::Accept(pw) => {
-                        let mut form = form;
-                        form.set_focused_value(pw);
-                        self.active = ActiveView::Form(form);
-                    }
-                    PasswordGenAction::Cancel => {
-                        self.active = ActiveView::Form(form);
-                    }
-                    PasswordGenAction::None => {
-                        self.active = ActiveView::PasswordGen { gen, form };
-                    }
-                }
-            }
             ActiveView::VaultForm(form) => match form.handle_key(key) {
                 VaultFormAction::Confirm(mut vault) => {
                     vault.recipients = vec![self.app.identity.to_recipient()];
@@ -543,6 +697,8 @@ impl Tui {
                 }
                 VaultFormAction::None => {}
             },
+            // These are handled in handle_key_with_modifiers, never reached here.
+            ActiveView::Form(_) | ActiveView::PasswordGen { .. } => {}
         }
         self.state.clone()
     }
@@ -555,23 +711,35 @@ impl Tui {
     pub async fn flush_pending(&mut self) -> Result<()> {
         // Drain vault mutation (save / delete).
         if let Some(action) = self.pending.take() {
-            if let Err(e) = self.do_flush(action).await {
-                self.error_message = Some(e.to_string());
+            match self.do_flush(action).await {
+                Ok(Some(ref msg)) => {
+                    self.show_toast(msg, ToastKind::Success);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    self.error_message = Some(e.to_string());
+                }
             }
         }
 
         // Drain clipboard copy.
         if let Some(pc) = self.pending_copy.take() {
-            if let Err(e) = self.do_copy(pc).await {
-                self.error_message = Some(e.to_string());
+            match self.do_copy(pc).await {
+                Ok(()) => {
+                    self.show_toast("Copied to clipboard (30s timeout)", ToastKind::Success);
+                }
+                Err(e) => {
+                    self.error_message = Some(e.to_string());
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Inner flush implementation — returns `Err` on backend failure.
-    async fn do_flush(&mut self, action: AppAction) -> Result<()> {
+    /// Inner flush implementation — returns `Ok(Some(msg))` on success with a
+    /// toast message, `Ok(None)` on success without a toast, or `Err` on failure.
+    async fn do_flush(&mut self, action: AppAction) -> Result<Option<String>> {
         let vaults = self.app.registry.list_vaults().await?;
 
         match action {
@@ -605,6 +773,12 @@ impl Tui {
                 }
                 self.main_view
                     .reload_entries_select(all_entries, Some(select_id));
+
+                let msg = match mode {
+                    FormMode::Add => "Entry created",
+                    FormMode::Edit => "Entry saved",
+                };
+                Ok(Some(msg.to_string()))
             }
             AppAction::DeleteEntry { entry_id, vault_id } => {
                 let vault = vaults.iter().find(|v| v.id == vault_id);
@@ -628,6 +802,8 @@ impl Tui {
                 }
                 self.main_view.reload_entries(all_entries);
                 self.detail_entry = None;
+
+                Ok(Some("Entry deleted".to_string()))
             }
             AppAction::LoadDetail { entry_id, vault_id } => {
                 let vault = vaults.iter().find(|v| v.id == vault_id);
@@ -638,6 +814,8 @@ impl Tui {
                         .vault_service_for(v, self.app.identity.clone());
                     self.detail_entry = svc.get_entry(entry_id).await?;
                 }
+
+                Ok(None) // No toast for loading detail
             }
             AppAction::SaveVault { vault } => {
                 self.app.registry.add_vault(&vault).await?;
@@ -657,6 +835,8 @@ impl Tui {
                 }
                 self.main_view.reload_vaults(vaults);
                 self.main_view.reload_entries(all_entries);
+
+                Ok(Some("Vault created".to_string()))
             }
             AppAction::DeleteVault { vault_id } => {
                 self.app.registry.remove_vault(vault_id).await?;
@@ -674,10 +854,10 @@ impl Tui {
                 self.main_view.reload_vaults(vaults);
                 self.main_view.reload_entries(all_entries);
                 self.detail_entry = None;
+
+                Ok(Some("Vault deleted".to_string()))
             }
         }
-
-        Ok(())
     }
 
     async fn do_copy(&mut self, pc: PendingCopy) -> Result<()> {
@@ -751,6 +931,27 @@ fn render_error_modal(frame: &mut Frame, area: Rect, message: &str) {
     frame.render_widget(hint, rows[1]);
 }
 
+/// Compute a centered rectangle within `area` at the given width and height
+/// percentages. The result is centered both horizontally and vertically.
+pub fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - height_percent) / 2),
+            Constraint::Percentage(height_percent),
+            Constraint::Percentage((100 - height_percent) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - width_percent) / 2),
+            Constraint::Percentage(width_percent),
+            Constraint::Percentage((100 - width_percent) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
 /// Render a small centered confirmation modal over the full terminal area.
 fn render_confirm_delete_modal(frame: &mut Frame, area: Rect, entry_name: &str) {
     // Modal dimensions: 40 wide, 5 tall
@@ -793,8 +994,8 @@ fn render_confirm_delete_modal(frame: &mut Frame, area: Rect, entry_name: &str) 
     ]);
     frame.render_widget(Paragraph::new(name_line), rows[0]);
 
-    let hint = Paragraph::new("  [y] confirm  [n / Esc] cancel")
-        .style(Style::default().fg(Color::DarkGray));
+    let hint =
+        Paragraph::new("  [d] delete  [c/Esc] cancel").style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, rows[1]);
 }
 
@@ -838,8 +1039,8 @@ fn render_confirm_delete_vault_modal(frame: &mut Frame, area: Rect, vault_name: 
     ]);
     frame.render_widget(Paragraph::new(name_line), rows[0]);
 
-    let hint = Paragraph::new("  [y] confirm  [n / Esc] cancel")
-        .style(Style::default().fg(Color::DarkGray));
+    let hint =
+        Paragraph::new("  [d] delete  [c/Esc] cancel").style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, rows[1]);
 }
 
@@ -883,7 +1084,70 @@ fn render_confirm_save_modal(frame: &mut Frame, area: Rect, entry_name: &str) {
     ]);
     frame.render_widget(Paragraph::new(name_line), rows[0]);
 
-    let hint = Paragraph::new("  [y] save  [n] discard  [Esc] back to form")
+    let hint = Paragraph::new("  [s] save  [d] discard  [Esc] back to form")
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, rows[1]);
+}
+
+/// Render a small centered confirmation modal for discarding changes.
+fn render_confirm_discard_modal(frame: &mut Frame, area: Rect) {
+    let modal_w = 44u16.min(area.width);
+    let modal_h = 5u16.min(area.height);
+    let x = area.x + area.width.saturating_sub(modal_w) / 2;
+    let y = area.y + area.height.saturating_sub(modal_h) / 2;
+    let modal_area = Rect::new(x, y, modal_w, modal_h);
+
+    frame.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(" Discard changes ");
+
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(inner);
+
+    let msg = Paragraph::new("  You have unsaved changes. Discard?")
+        .style(Style::default().fg(Color::White));
+    frame.render_widget(msg, rows[0]);
+
+    let hint = Paragraph::new("  [d] discard  [b/Esc] back to form")
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hint, rows[1]);
+}
+
+/// Render a transient toast notification centered at the bottom of the body area.
+fn render_toast(frame: &mut Frame, area: Rect, toast: &Toast) {
+    let color = match toast.kind {
+        ToastKind::Success => Color::Green,
+        ToastKind::Info => Color::Cyan,
+        ToastKind::Warning => Color::Yellow,
+    };
+
+    let msg_len = toast.message.len() as u16;
+    let toast_w = (msg_len + 6).min(area.width * 60 / 100);
+    let toast_h = 3u16;
+    let x = area.x + area.width.saturating_sub(toast_w) / 2;
+    let y = area.y + area.height.saturating_sub(toast_h).saturating_sub(2); // 2 rows above bottom
+    let toast_area = Rect::new(x, y, toast_w, toast_h);
+
+    frame.render_widget(Clear, toast_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(color))
+        .title(format!(" {} ", toast.message));
+
+    frame.render_widget(block, toast_area);
 }

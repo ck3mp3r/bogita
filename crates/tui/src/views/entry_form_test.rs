@@ -1,6 +1,6 @@
-use crate::views::entry_form::{EntryForm, FormAction, FormFieldType, FormMode};
+use crate::views::entry_form::{EntryForm, FormAction, FormFieldType, FormMode, ValidationIssue};
 use bogita_core::domain::{FieldType, FieldValue};
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 fn add_form() -> EntryForm {
     EntryForm::new_add(None)
@@ -151,6 +151,428 @@ fn tab_wraps_to_name_after_last_slot() {
     form.handle_key(KeyCode::Tab); // 2→3
     form.handle_key(KeyCode::Tab); // 3→0
     assert_eq!(form.focused_field(), 0);
+}
+
+// ── dirty state tracking ──────────────────────────────────────────────────────
+
+#[test]
+fn add_mode_not_dirty_when_empty() {
+    let form = add_form();
+    assert!(!form.is_dirty());
+}
+
+#[test]
+fn add_mode_dirty_when_name_entered() {
+    let form = add_form_named("GitHub");
+    assert!(form.is_dirty());
+}
+
+#[test]
+fn add_mode_dirty_when_field_added() {
+    let mut form = add_form();
+    form.handle_key(KeyCode::Char('+'));
+    assert!(form.is_dirty());
+}
+
+#[test]
+fn edit_mode_not_dirty_when_unchanged() {
+    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    let entry = Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "MyEntry".to_string(),
+        entry_type: EntryType::Token,
+        fields: vec![Field {
+            id: Uuid::new_v4(),
+            key: "password".to_string(),
+            field_type: FieldType::Token,
+            value: FieldValue::Hidden("s3cret".to_string()),
+            encrypted: true,
+            idx: 0,
+        }],
+        created_at: Utc::now().timestamp(),
+        modified_at: Utc::now().timestamp(),
+    };
+    let form = EntryForm::new_edit(&entry);
+    assert!(
+        !form.is_dirty(),
+        "edit form with no changes should not be dirty"
+    );
+}
+
+#[test]
+fn edit_mode_dirty_when_name_changed() {
+    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    let entry = Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "MyEntry".to_string(),
+        entry_type: EntryType::Token,
+        fields: vec![Field {
+            id: Uuid::new_v4(),
+            key: "password".to_string(),
+            field_type: FieldType::Token,
+            value: FieldValue::Hidden("s3cret".to_string()),
+            encrypted: true,
+            idx: 0,
+        }],
+        created_at: Utc::now().timestamp(),
+        modified_at: Utc::now().timestamp(),
+    };
+    let mut form = EntryForm::new_edit(&entry);
+    // Change the name
+    form.handle_key(KeyCode::Backspace);
+    form.handle_key(KeyCode::Backspace);
+    form.handle_key(KeyCode::Backspace);
+    form.handle_key(KeyCode::Backspace);
+    form.handle_key(KeyCode::Backspace);
+    form.handle_key(KeyCode::Backspace);
+    form.handle_key(KeyCode::Backspace);
+    for c in "Renamed".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    assert!(form.is_dirty());
+}
+
+#[test]
+fn edit_mode_dirty_when_field_value_changed() {
+    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    let entry = Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "MyEntry".to_string(),
+        entry_type: EntryType::Token,
+        fields: vec![Field {
+            id: Uuid::new_v4(),
+            key: "password".to_string(),
+            field_type: FieldType::Token,
+            value: FieldValue::Hidden("s3cret".to_string()),
+            encrypted: true,
+            idx: 0,
+        }],
+        created_at: Utc::now().timestamp(),
+        modified_at: Utc::now().timestamp(),
+    };
+    let mut form = EntryForm::new_edit(&entry);
+    // Tab to value slot and change the value
+    form.handle_key(KeyCode::Tab); // → key
+    form.handle_key(KeyCode::Tab); // → value
+                                   // Clear "s3cret" and type new value
+    for _ in 0.."s3cret".len() {
+        form.handle_key(KeyCode::Backspace);
+    }
+    for c in "n3wpass".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    assert!(form.is_dirty());
+}
+
+#[test]
+fn edit_mode_dirty_when_field_added() {
+    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    let entry = Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "MyEntry".to_string(),
+        entry_type: EntryType::Token,
+        fields: vec![Field {
+            id: Uuid::new_v4(),
+            key: "password".to_string(),
+            field_type: FieldType::Token,
+            value: FieldValue::Hidden("s3cret".to_string()),
+            encrypted: true,
+            idx: 0,
+        }],
+        created_at: Utc::now().timestamp(),
+        modified_at: Utc::now().timestamp(),
+    };
+    let mut form = EntryForm::new_edit(&entry);
+    form.handle_key(KeyCode::Char('+')); // add a field
+    assert!(form.is_dirty());
+}
+
+#[test]
+fn edit_mode_dirty_when_field_removed() {
+    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    let entry = Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "MyEntry".to_string(),
+        entry_type: EntryType::Token,
+        fields: vec![Field {
+            id: Uuid::new_v4(),
+            key: "password".to_string(),
+            field_type: FieldType::Token,
+            value: FieldValue::Hidden("s3cret".to_string()),
+            encrypted: true,
+            idx: 0,
+        }],
+        created_at: Utc::now().timestamp(),
+        modified_at: Utc::now().timestamp(),
+    };
+    let mut form = EntryForm::new_edit(&entry);
+    // Tab to key slot then remove the field
+    form.handle_key(KeyCode::Tab); // → key
+    form.handle_key(KeyCode::Char('-')); // remove field
+    assert!(form.is_dirty());
+}
+
+#[test]
+fn esc_when_not_dirty_cancels_immediately() {
+    let mut form = add_form(); // empty add form — not dirty
+    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::Cancel);
+}
+
+#[test]
+fn esc_when_dirty_returns_confirm_discard() {
+    let mut form = add_form_named("GitHub"); // has a name — dirty
+    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::ConfirmDiscard);
+}
+
+// ── secret field reveal ───────────────────────────────────────────────────────
+
+/// Create an EntryForm with a single Token field (obscured).
+fn form_with_token_field() -> EntryForm {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field, focus on key
+    for c in "password".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    form.handle_key(KeyCode::Tab); // → value
+    for c in "s3cret".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    form.handle_key(KeyCode::Tab); // → type slot
+                                   // Open dropdown and select Token (index 2)
+    form.handle_key(KeyCode::Char(' ')); // open dropdown
+    form.handle_key(KeyCode::Char('j')); // Username
+    form.handle_key(KeyCode::Char('j')); // Token
+    form.handle_key(KeyCode::Enter); // confirm selection
+    form
+}
+
+#[test]
+fn reveal_on_focus_obscured_field() {
+    let mut form = form_with_token_field();
+    // Focus is on type slot. Tab to value slot (BackTab to go back).
+    form.handle_key(KeyCode::BackTab); // → value slot (token)
+                                       // The value slot is obscured (Token), so it should be auto-revealed.
+    assert!(
+        form.revealed_secret_fields.contains(&0),
+        "field 0 should be in revealed set when focused"
+    );
+}
+
+#[test]
+fn unreveal_on_leave_obscured_field() {
+    let mut form = form_with_token_field();
+    // Focus is on type slot. BackTab to value slot (revealed).
+    form.handle_key(KeyCode::BackTab); // → value slot (revealed)
+    assert!(form.revealed_secret_fields.contains(&0));
+    // Tab away to type slot (unreveal).
+    form.handle_key(KeyCode::Tab); // → type slot
+    assert!(
+        !form.revealed_secret_fields.contains(&0),
+        "field 0 should be removed from revealed set when focus leaves"
+    );
+}
+
+#[test]
+fn ctrl_r_toggles_reveal() {
+    let mut form = form_with_token_field();
+    // Focus is on type slot. BackTab to value slot (auto-revealed).
+    form.handle_key(KeyCode::BackTab); // → value slot
+    assert!(form.revealed_secret_fields.contains(&0));
+    // Ctrl-r toggles reveal off
+    form.handle_key_with_modifiers(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert!(
+        !form.revealed_secret_fields.contains(&0),
+        "Ctrl-r should toggle reveal off"
+    );
+    // Ctrl-r toggles reveal back on
+    form.handle_key_with_modifiers(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert!(
+        form.revealed_secret_fields.contains(&0),
+        "Ctrl-r should toggle reveal back on"
+    );
+}
+
+#[test]
+fn plain_r_in_non_obscured_value_inserts_character() {
+    let mut form = add_form_named("GitHub");
+    form.handle_key(KeyCode::Char('+')); // add field, focus → key
+    form.handle_key(KeyCode::Tab); // → value slot (plain Text)
+                                   // Plain 'r' (no Ctrl) should insert 'r' into the value, not toggle reveal.
+    form.handle_key(KeyCode::Char('r'));
+    assert!(
+        form.revealed_secret_fields.is_empty(),
+        "plain 'r' should not affect reveal state"
+    );
+    let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
+        panic!("expected Confirm");
+    };
+    assert!(
+        matches!(&entry.fields[0].value, FieldValue::Text(v) if v == "r"),
+        "plain 'r' should be inserted into the value"
+    );
+}
+
+#[test]
+fn plain_r_in_obscured_value_inserts_character() {
+    let mut form = form_with_token_field();
+    // Focus is on type slot after form_with_token_field. BackTab to value.
+    form.handle_key(KeyCode::BackTab); // → value slot (Token, auto-revealed)
+    assert!(form.revealed_secret_fields.contains(&0));
+    // Plain 'r' (no Ctrl) should insert 'r' into the value, not toggle reveal.
+    form.handle_key(KeyCode::Char('r'));
+    assert!(
+        form.revealed_secret_fields.contains(&0),
+        "plain 'r' should not toggle reveal off in obscured field"
+    );
+    let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
+        panic!("expected Confirm");
+    };
+    assert!(
+        matches!(&entry.fields[0].value, FieldValue::Hidden(v) if v == "s3cretr"),
+        "plain 'r' should be inserted into the obscured value, got: {:?}",
+        entry.fields[0].value
+    );
+}
+
+#[test]
+fn plain_fields_not_affected_by_reveal() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field
+    form.handle_key(KeyCode::Tab); // → value slot (plain Text)
+                                   // Plain text fields should not be in revealed set
+    assert!(
+        form.revealed_secret_fields.is_empty(),
+        "plain text fields should not be in revealed set"
+    );
+}
+
+#[test]
+fn confirm_clears_reveal_state() {
+    let mut form = form_with_token_field();
+    // BackTab to value slot (auto-revealed).
+    form.handle_key(KeyCode::BackTab); // → value slot
+    assert!(form.revealed_secret_fields.contains(&0));
+    // Confirm the form
+    form.handle_key(KeyCode::Enter);
+    assert!(
+        form.revealed_secret_fields.is_empty(),
+        "confirm should clear revealed set"
+    );
+}
+
+#[test]
+fn confirm_syncs_field_type_from_choice() {
+    use bogita_core::domain::FieldType;
+
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field, focus on key
+    form.handle_key(KeyCode::Tab); // → value
+    for c in "s3cret".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    form.handle_key(KeyCode::Tab); // → type slot
+                                   // Change type to Token (index 2) via the Choice widget directly,
+                                   // simulating what happens when the user navigates with j/k and
+                                   // the popup closes via Enter.
+    form.handle_key(KeyCode::Char(' ')); // open dropdown
+    form.handle_key(KeyCode::Char('j')); // Username
+    form.handle_key(KeyCode::Char('j')); // Token
+    form.handle_key(KeyCode::Enter); // close popup, apply selection
+                                     // Tab back to value slot and confirm
+    form.handle_key(KeyCode::BackTab); // → value slot
+    let action = form.handle_key(KeyCode::Enter);
+    match action {
+        FormAction::Confirm(entry) => {
+            assert_eq!(
+                entry.fields[0].field_type,
+                FieldType::Token,
+                "field type should be Token"
+            );
+            assert!(
+                matches!(
+                    &entry.fields[0].value,
+                    bogita_core::domain::FieldValue::Hidden(_)
+                ),
+                "value should be Hidden for Token type"
+            );
+        }
+        other => panic!("expected Confirm, got {:?}", other),
+    }
+}
+
+#[test]
+fn cancel_clears_reveal_state() {
+    let mut form = form_with_token_field();
+    // BackTab to value slot (auto-revealed).
+    form.handle_key(KeyCode::BackTab); // → value slot
+    assert!(form.revealed_secret_fields.contains(&0));
+    // Cancel the form
+    form.handle_key(KeyCode::Esc);
+    assert!(
+        form.revealed_secret_fields.is_empty(),
+        "cancel should clear revealed set"
+    );
+}
+
+#[test]
+fn ssh_key_field_also_reveals() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field
+    form.handle_key(KeyCode::Tab); // → value
+    form.handle_key(KeyCode::Tab); // → type slot
+                                   // Open dropdown and select SshKey (index 4)
+    form.handle_key(KeyCode::Char(' ')); // open dropdown
+    form.handle_key(KeyCode::Char('j')); // Username
+    form.handle_key(KeyCode::Char('j')); // Token
+    form.handle_key(KeyCode::Char('j')); // Totp
+    form.handle_key(KeyCode::Char('j')); // SshKey
+    form.handle_key(KeyCode::Enter); // confirm selection
+                                     // BackTab to value slot
+    form.handle_key(KeyCode::BackTab); // → value slot
+    assert!(
+        form.revealed_secret_fields.contains(&0),
+        "SshKey field should be auto-revealed on focus"
+    );
+}
+
+#[test]
+fn totp_field_also_reveals() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field
+    form.handle_key(KeyCode::Tab); // → value
+    form.handle_key(KeyCode::Tab); // → type slot
+                                   // Open dropdown and select Totp (index 3)
+    form.handle_key(KeyCode::Char(' ')); // open dropdown
+    form.handle_key(KeyCode::Char('j')); // Username
+    form.handle_key(KeyCode::Char('j')); // Token
+    form.handle_key(KeyCode::Char('j')); // Totp
+    form.handle_key(KeyCode::Enter); // confirm selection
+                                     // BackTab to value slot
+    form.handle_key(KeyCode::BackTab); // → value slot
+    assert!(
+        form.revealed_secret_fields.contains(&0),
+        "Totp field should be auto-revealed on focus"
+    );
 }
 
 #[test]
@@ -482,7 +904,8 @@ fn sshkey_type_produces_hidden_field_value_with_sshprivatekey_field_type() {
 #[test]
 fn esc_always_cancels_form() {
     let mut form = add_form_named("GitHub");
-    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::Cancel);
+    // Form has a name, so it's dirty — Esc returns ConfirmDiscard.
+    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::ConfirmDiscard);
 }
 
 #[test]
@@ -491,7 +914,8 @@ fn esc_cancels_from_type_slot() {
     form.handle_key(KeyCode::Char('+'));
     form.handle_key(KeyCode::Tab); // → value
     form.handle_key(KeyCode::Tab); // → type slot
-    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::Cancel);
+                                   // Form has a name and a field, so it's dirty — Esc returns ConfirmDiscard.
+    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::ConfirmDiscard);
 }
 
 // ── edit mode pre-fills ───────────────────────────────────────────────────────
@@ -827,8 +1251,8 @@ fn notes_field_esc_cancels_form() {
     form.handle_key(KeyCode::Tab); // → name
     form.handle_key(KeyCode::Tab); // → key
     form.handle_key(KeyCode::Tab); // → value (TextAreaState)
-                                   // Esc should cancel the form
-    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::Cancel);
+                                   // Esc should return ConfirmDiscard (form is dirty)
+    assert_eq!(form.handle_key(KeyCode::Esc), FormAction::ConfirmDiscard);
 }
 
 #[test]
@@ -858,4 +1282,195 @@ fn notes_field_round_trips_through_edit() {
     };
     assert!(matches!(&e.fields[0].value, FieldValue::Text(v) if v == "Line 1\nLine 2\nLine 3"));
     assert_eq!(e.fields[0].field_type, FieldType::Notes);
+}
+
+// ── scrolling ─────────────────────────────────────────────────────────────────
+
+/// Create an EntryForm with `count` fields by repeatedly pressing '+'.
+fn form_with_fields(count: usize) -> EntryForm {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    for _ in 0..count {
+        form.handle_key(KeyCode::Char('+'));
+    }
+    form
+}
+
+#[test]
+fn scroll_offset_starts_at_zero() {
+    let form = form_with_fields(5);
+    assert_eq!(form.scroll_offset, 0);
+}
+
+#[test]
+fn scroll_not_needed_with_few_fields() {
+    let mut form = form_with_fields(2);
+    form.last_visible_rows = 4;
+    // 2 fields fit in 4 visible rows, scroll_offset stays 0.
+    assert_eq!(form.scroll_offset, 0);
+}
+
+#[test]
+fn scroll_needed_with_many_fields() {
+    let mut form = form_with_fields(20);
+    form.last_visible_rows = 4;
+    // Tab to field 10 (key slot = 1 + 10*3 = 31 tabs).
+    for _ in 0..31 {
+        form.handle_key(KeyCode::Tab);
+    }
+    // With 4 visible rows, field 10 is below the visible range (0..4).
+    // auto_scroll adjusts incrementally as we Tab through fields.
+    // By field 10 key, scroll_offset = 6 (field 10 is at position 10-6=4,
+    // which is the last visible position in [0,4)).
+    assert_eq!(form.scroll_offset, 6);
+}
+
+#[test]
+fn tab_to_field_below_visible_scrolls_down() {
+    let mut form = form_with_fields(20);
+    form.last_visible_rows = 4;
+    // Tab to field 15 key slot (1 + 15*3 = 46 tabs).
+    for _ in 0..46 {
+        form.handle_key(KeyCode::Tab);
+    }
+    // With 4 visible rows, field 15 is far below the visible range.
+    // auto_scroll adjusts incrementally. By field 15 key, scroll_offset = 11.
+    assert_eq!(form.scroll_offset, 11);
+}
+
+#[test]
+fn backtab_to_field_above_visible_scrolls_up() {
+    let mut form = form_with_fields(20);
+    form.last_visible_rows = 4;
+    // Tab to field 15 key slot.
+    for _ in 0..46 {
+        form.handle_key(KeyCode::Tab);
+    }
+    // Now at field 15 key. Set scroll_offset to 16 (showing fields 16..19).
+    form.scroll_offset = 16;
+    // BackTab to previous slot (field 14 type).
+    form.handle_key(KeyCode::BackTab);
+    // Field 14 is above scroll_offset (16), so scroll_offset adjusts.
+    // The exact value depends on focus order, but it must be < 16.
+    assert!(form.scroll_offset < 16);
+}
+
+#[test]
+fn field_removal_adjusts_scroll() {
+    let mut form = form_with_fields(20);
+    form.last_visible_rows = 4;
+    // Set scroll_offset to max (16 = 20-4).
+    form.scroll_offset = 16;
+    // Navigate to field 19 key slot and remove it.
+    for _ in 0..58 {
+        form.handle_key(KeyCode::Tab);
+    }
+    form.handle_key(KeyCode::Char('-'));
+    // After removal: 19 fields, max_scroll = 19-4 = 15.
+    // scroll_offset was 16, now clamped to 15.
+    assert_eq!(form.scroll_offset, 15);
+}
+
+#[test]
+fn add_field_scrolls_to_show_new_field() {
+    let mut form = form_with_fields(20);
+    form.last_visible_rows = 4;
+    form.scroll_offset = 0;
+    // Add a field — now 21 fields, 4 visible rows.
+    form.handle_key(KeyCode::Char('+'));
+    // scroll_offset = 21 - 4 = 17. Field 20 is at position 20-17=3 in [0,4).
+    assert_eq!(form.scroll_offset, 17);
+}
+
+#[test]
+fn name_always_visible() {
+    let mut form = form_with_fields(20);
+    form.last_visible_rows = 4;
+    // Set scroll_offset to show last fields.
+    form.scroll_offset = 16;
+    // scroll_offset stays at 16 (name is not part of scroll range).
+    assert_eq!(form.scroll_offset, 16);
+    // Tab back to name to verify it's reachable.
+    // form_with_fields leaves focus on last field's key slot.
+    // BackTab 58 times to wrap around to name.
+    for _ in 0..58 {
+        form.handle_key(KeyCode::BackTab);
+    }
+    assert_eq!(form.focused_field(), 0);
+}
+
+// ── inline validation ─────────────────────────────────────────────────────────
+
+#[test]
+fn empty_name_shows_validation_error() {
+    let mut form = EntryForm::new_add(None);
+    // Press Backspace to trigger a key event (which calls validate()).
+    form.handle_key(KeyCode::Backspace);
+    assert!(form.has_validation_errors());
+    assert!(form
+        .validation_errors()
+        .contains(&ValidationIssue::EmptyName));
+}
+
+#[test]
+fn non_empty_name_clears_error() {
+    let mut form = EntryForm::new_add(None);
+    form.handle_key(KeyCode::Char('x'));
+    assert!(!form.has_validation_errors());
+}
+
+#[test]
+fn empty_field_key_shows_error_after_touch() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field
+    form.handle_key(KeyCode::Char('a')); // type in key (marks touched)
+    form.handle_key(KeyCode::Backspace); // delete it — now empty but touched
+    assert!(form
+        .validation_errors()
+        .iter()
+        .any(|e| matches!(e, ValidationIssue::EmptyKey(0))));
+}
+
+#[test]
+fn duplicate_keys_shown_as_error() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+'));
+    for c in "key1".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    form.handle_key(KeyCode::Char('+'));
+    for c in "key1".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
+    assert!(form
+        .validation_errors()
+        .iter()
+        .any(|e| matches!(e, ValidationIssue::DuplicateKey(_))));
+}
+
+#[test]
+fn confirm_with_errors_returns_validation_error() {
+    let mut form = EntryForm::new_add(None);
+    // Empty name + Enter should trigger validation error.
+    let action = form.handle_key(KeyCode::Enter);
+    assert!(matches!(action, FormAction::ValidationError(_)));
+}
+
+#[test]
+fn confirm_without_errors_succeeds() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    let action = form.handle_key(KeyCode::Enter);
+    assert!(matches!(action, FormAction::Confirm(_)));
+}
+
+#[test]
+fn newly_added_field_not_immediately_invalid() {
+    let mut form = EntryForm::new_add(Some("Test".to_string()));
+    form.handle_key(KeyCode::Char('+')); // add field, don't type in key
+    assert!(
+        !form
+            .validation_errors()
+            .iter()
+            .any(|e| matches!(e, ValidationIssue::EmptyKey(0))),
+        "newly added field should not be flagged as EmptyKey until touched"
+    );
 }

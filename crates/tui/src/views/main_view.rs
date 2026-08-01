@@ -243,12 +243,10 @@ impl MainView {
             return match (&self.focused, key) {
                 // Vaults column: a = add vault, d = delete vault
                 (Column::Vaults, KeyCode::Char('a')) => MainViewAction::OpenAddVault,
-                (Column::Vaults, KeyCode::Char('d')) => {
-                    match self.selected_vault_id() {
-                        Some(id) => MainViewAction::DeleteVault { vault_id: id },
-                        None => MainViewAction::None,
-                    }
-                }
+                (Column::Vaults, KeyCode::Char('d')) => match self.selected_vault_id() {
+                    Some(id) => MainViewAction::DeleteVault { vault_id: id },
+                    None => MainViewAction::None,
+                },
                 // Entries column: a = add entry, e = edit entry, d = delete entry
                 (Column::Entries, KeyCode::Char('a')) => {
                     let vault_id = match self.vault_state.selected() {
