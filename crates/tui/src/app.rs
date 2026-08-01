@@ -353,6 +353,12 @@ impl Tui {
             ActiveView::Main => {
                 self.main_view
                     .render_detail(frame, col3, self.detail_entry.as_ref());
+                if self.main_view.is_leader_mode() {
+                    self.main_view.render_leader_overlay(frame, body_area);
+                }
+                if self.main_view.is_vault_picker_open() {
+                    self.main_view.render_vault_picker(frame, body_area);
+                }
             }
             ActiveView::Form(f) => {
                 // Render main view detail pane behind the overlay.
@@ -474,12 +480,12 @@ impl Tui {
                 }
             }
             ActiveView::Main => {
+                if self.main_view.is_vault_picker_open() {
+                    return "[j/k] select  [a] add vault  [d] delete vault  [Enter] confirm  [Esc] close".to_string();
+                }
                 if self.main_view.is_leader_mode() {
                     use crate::views::main_view::Column;
                     match self.main_view.focused {
-                        Column::Vaults => {
-                            "[a] add vault  [d] delete vault  [Esc] cancel".to_string()
-                        }
                         Column::Entries => {
                             "[a] add  [e] edit  [d] delete  [Esc] cancel".to_string()
                         }
@@ -488,9 +494,9 @@ impl Tui {
                 } else {
                     use crate::views::main_view::Column;
                     if self.main_view.focused == Column::Detail {
-                        "[j/k] scroll  [s] reveal  [c] copy  [Tab] columns  [Space] actions  [q] quit".to_string()
+                        "[j/k] scroll  [s] reveal  [c] copy  [Tab] columns  [v] vault  [Space] actions  [q] quit".to_string()
                     } else {
-                        "[/] search  [Space] actions  [j/k] scroll  [Tab] focus  [q] quit"
+                        "[/] search  [v] vault  [Space] actions  [j/k] scroll  [Tab] focus  [q] quit"
                             .to_string()
                     }
                 }

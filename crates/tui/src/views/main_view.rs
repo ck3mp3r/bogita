@@ -1,21 +1,20 @@
-//! Main 3-column view: vault list | entry list | entry detail.
+//! Main 2-column view: entry list | entry detail.
 //!
 //! Column layout (approximate widths):
-//!   [Col 1: ~20%] Vault list — "All Vaults" + one row per vault
-//!   [Col 2: ~30%] Entry list — filtered by selected vault
-//!   [Col 3: ~50%] Entry detail — fields rendered type-aware; live TOTP for OTP entries
+//!   [Col 1: ~35%] Entry list — filtered by selected vault
+//!   [Col 2: ~65%] Entry detail — fields rendered type-aware; live TOTP for OTP entries
 //!
 //! Navigation:
 //!   Tab / Shift+Tab — move focus right / left between columns
 //!   j / k / Down / Up — scroll within the focused column
-//!   s — toggle reveal on the selected hidden field (Col 3 focused)
+//!   s — toggle reveal on the selected hidden field (Col 2 focused)
 
 use bogita_core::domain::{Entry, FieldType, FieldValue, Vault};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 use std::collections::HashSet;
 
@@ -57,7 +56,6 @@ pub enum MainViewAction {
 /// Which column currently has keyboard focus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Column {
-    Vaults,
     Entries,
     Detail,
 }
@@ -65,16 +63,14 @@ pub enum Column {
 impl Column {
     fn next(&self) -> Self {
         match self {
-            Column::Vaults => Column::Entries,
             Column::Entries => Column::Detail,
-            Column::Detail => Column::Vaults,
+            Column::Detail => Column::Entries,
         }
     }
 
     fn prev(&self) -> Self {
         match self {
-            Column::Vaults => Column::Detail,
-            Column::Entries => Column::Vaults,
+            Column::Entries => Column::Detail,
             Column::Detail => Column::Entries,
         }
     }
@@ -109,6 +105,8 @@ pub struct MainView {
     searching: bool,
     /// Whether the Space leader key has been pressed and we're awaiting the action key.
     leader_mode: bool,
+    /// Whether the vault picker dropdown is open.
+    vault_picker_open: bool,
 }
 
 impl MainView {
@@ -132,6 +130,7 @@ impl MainView {
             search_query: String::new(),
             searching: false,
             leader_mode: false,
+            vault_picker_open: false,
         }
     }
 
@@ -150,6 +149,17 @@ impl MainView {
     /// Whether the Space leader key has been pressed and we're awaiting an action key.
     pub fn is_leader_mode(&self) -> bool {
         self.leader_mode
+    }
+
+    /// Whether the vault picker dropdown is open.
+    pub fn is_vault_picker_open(&self) -> bool {
+        self.vault_picker_open
+    }
+
+    /// The currently selected vault index (0 = "All Vaults").
+    #[cfg(test)]
+    pub fn vault_state_selected(&self) -> Option<usize> {
+        self.vault_state.selected()
     }
 
     /// Whether the search bar is currently accepting input.
@@ -212,6 +222,11 @@ impl MainView {
     // ── key handling ─────────────────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyCode) -> MainViewAction {
+        // Vault picker dropdown — intercept all keys when open.
+        if self.vault_picker_open {
+            return self.handle_vault_picker_key(key);
+        }
+
         // When the search bar is open, all input goes to the search query.
         if self.searching {
             match key {
@@ -241,12 +256,6 @@ impl MainView {
         if self.leader_mode {
             self.leader_mode = false;
             return match (&self.focused, key) {
-                // Vaults column: a = add vault, d = delete vault
-                (Column::Vaults, KeyCode::Char('a')) => MainViewAction::OpenAddVault,
-                (Column::Vaults, KeyCode::Char('d')) => match self.selected_vault_id() {
-                    Some(id) => MainViewAction::DeleteVault { vault_id: id },
-                    None => MainViewAction::None,
-                },
                 // Entries column: a = add entry, e = edit entry, d = delete entry
                 (Column::Entries, KeyCode::Char('a')) => {
                     let vault_id = match self.vault_state.selected() {
@@ -279,6 +288,10 @@ impl MainView {
             }
             KeyCode::Char('/') => {
                 self.searching = true;
+                MainViewAction::None
+            }
+            KeyCode::Char('v') => {
+                self.vault_picker_open = true;
                 MainViewAction::None
             }
             KeyCode::Tab => {
@@ -389,14 +402,6 @@ impl MainView {
 
     fn move_down(&mut self) {
         match self.focused {
-            Column::Vaults => {
-                let len = self.vaults.len() + 1; // +1 for "All Vaults"
-                let cur = self.vault_state.selected().unwrap_or(0);
-                let next = (cur + 1).min(len.saturating_sub(1));
-                self.vault_state.select(Some(next));
-                // Reset entry selection when vault filter changes
-                self.reset_entry_selection();
-            }
             Column::Entries => {
                 let len = self.visible_entries().len();
                 let cur = self.entry_state.selected().unwrap_or(0);
@@ -416,12 +421,6 @@ impl MainView {
 
     fn move_up(&mut self) {
         match self.focused {
-            Column::Vaults => {
-                let cur = self.vault_state.selected().unwrap_or(0);
-                let next = cur.saturating_sub(1);
-                self.vault_state.select(Some(next));
-                self.reset_entry_selection();
-            }
             Column::Entries => {
                 let cur = self.entry_state.selected().unwrap_or(0);
                 let next = cur.saturating_sub(1);
@@ -465,32 +464,50 @@ impl MainView {
         }
     }
 
+    fn handle_vault_picker_key(&mut self, key: KeyCode) -> MainViewAction {
+        let len = self.vaults.len() + 1; // +1 for "All Vaults"
+        match key {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let cur = self.vault_state.selected().unwrap_or(0);
+                let next = (cur + 1).min(len.saturating_sub(1));
+                self.vault_state.select(Some(next));
+                MainViewAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let cur = self.vault_state.selected().unwrap_or(0);
+                let next = cur.saturating_sub(1);
+                self.vault_state.select(Some(next));
+                MainViewAction::None
+            }
+            KeyCode::Enter => {
+                self.vault_picker_open = false;
+                self.reset_entry_selection();
+                MainViewAction::None
+            }
+            KeyCode::Esc => {
+                self.vault_picker_open = false;
+                MainViewAction::None
+            }
+            KeyCode::Char('a') => {
+                self.vault_picker_open = false;
+                MainViewAction::OpenAddVault
+            }
+            KeyCode::Char('d') => {
+                // Only allow delete on a specific vault (not "All Vaults" at index 0)
+                if let Some(id) = self.selected_vault_id() {
+                    self.vault_picker_open = false;
+                    MainViewAction::DeleteVault { vault_id: id }
+                } else {
+                    MainViewAction::None
+                }
+            }
+            _ => MainViewAction::None,
+        }
+    }
+
     pub fn render_leader_overlay(&self, frame: &mut Frame, area: Rect) {
         // Determine height and content based on focused column
         let (h, lines): (u16, Vec<Line>) = match self.focused {
-            Column::Vaults => {
-                let lines = vec![
-                    Line::from(vec![
-                        Span::styled(
-                            " [a] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Add vault"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled(
-                            " [d] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Delete vault"),
-                    ]),
-                ];
-                (4, lines)
-            }
             Column::Entries => {
                 let lines = vec![
                     Line::from(vec![
@@ -550,19 +567,57 @@ impl MainView {
         frame.render_widget(para, popup);
     }
 
+    pub fn render_vault_picker(&mut self, frame: &mut Frame, area: Rect) {
+        // Dropdown anchored at top-left of the entries column area
+        let width = 26u16.min(area.width);
+        let height = (self.vaults.len() as u16 + 4).min(area.height); // border + title + items + hint
+        let dropdown = Rect::new(area.x, area.y, width, height);
+
+        // Clear the area beneath the dropdown
+        frame.render_widget(Clear, dropdown);
+
+        let block = Block::default()
+            .title(" Vault ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let inner = block.inner(dropdown);
+        frame.render_widget(block, dropdown);
+
+        // Build the vault list
+        let mut items: Vec<ListItem> = vec![ListItem::new("All Vaults")];
+        for v in &self.vaults {
+            items.push(ListItem::new(v.name.as_str()));
+        }
+
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▶ ");
+
+        frame.render_stateful_widget(list, inner, &mut self.vault_state);
+    }
+
     // ── rendering ─────────────────────────────────────────────────────────────
 
-    /// Full render: vaults, entries, and detail.
+    /// Full render: entries and detail.
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
-        let col3 = self.render_cols_1_2(frame, area);
-        self.render_detail(frame, col3, self.selected_entry());
+        let col2 = self.render_cols_1_2(frame, area);
+        self.render_detail(frame, col2, self.selected_entry());
         if self.leader_mode {
             self.render_leader_overlay(frame, area);
         }
+        if self.vault_picker_open {
+            self.render_vault_picker(frame, area);
+        }
     }
 
-    /// Render only Cols 1 (vaults) and 2 (entries), plus the search bar if
-    /// active.  Returns the `Rect` reserved for Col 3 so the caller can
+    /// Render only Col 1 (entries), plus the search bar if
+    /// active.  Returns the `Rect` reserved for Col 2 so the caller can
     /// render a form or modal there.
     pub fn render_cols_1_2(&mut self, frame: &mut Frame, area: Rect) -> Rect {
         // Reserve a search bar row at the bottom when searching.
@@ -578,21 +633,16 @@ impl MainView {
 
         let cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(20),
-                Constraint::Percentage(30),
-                Constraint::Percentage(50),
-            ])
+            .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
             .split(main_area);
 
-        self.render_vaults(frame, cols[0]);
-        self.render_entries(frame, cols[1]);
+        self.render_entries(frame, cols[0]);
 
         if let Some(bar) = search_area {
             self.render_search_bar(frame, bar);
         }
 
-        cols[2]
+        cols[1]
     }
 
     fn render_search_bar(&self, frame: &mut Frame, area: Rect) {
@@ -605,35 +655,6 @@ impl MainView {
         let text = format!("{prefix}{}", self.search_query);
         let bar = Paragraph::new(text).style(style);
         frame.render_widget(bar, area);
-    }
-
-    fn render_vaults(&mut self, frame: &mut Frame, area: Rect) {
-        let focused = self.focused == Column::Vaults;
-        let block = Block::default()
-            .title(" Vaults ")
-            .borders(Borders::ALL)
-            .border_type(if focused {
-                BorderType::Double
-            } else {
-                BorderType::Plain
-            });
-
-        let mut items: Vec<ListItem> = vec![ListItem::new("All Vaults")];
-        for v in &self.vaults {
-            items.push(ListItem::new(v.name.as_str()));
-        }
-
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▶ ");
-
-        let state = &mut self.vault_state;
-        frame.render_stateful_widget(list, area, state);
     }
 
     fn render_entries(&mut self, frame: &mut Frame, area: Rect) {

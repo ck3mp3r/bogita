@@ -67,6 +67,15 @@ fn make_otp_entry(name: &str, vault_id: Uuid) -> Entry {
     e
 }
 
+fn make_view_with_vaults() -> MainView {
+    let v1 = make_vault("Work");
+    let v2 = make_vault("Personal");
+    let e1 = make_entry("GitHub", v1.id, EntryType::Token);
+    let e2 = make_entry("GitLab", v1.id, EntryType::Token);
+    let e3 = make_entry("Twitter", v2.id, EntryType::Token);
+    MainView::new(vec![v1, v2], vec![e1, e2, e3])
+}
+
 // ── construction ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -105,10 +114,10 @@ fn selecting_specific_vault_filters_entries() {
     let e1 = make_entry("GitHub", v1_id, EntryType::Token);
     let e2 = make_entry("Twitter", v2.id, EntryType::Token);
     let mut view = MainView::new(vec![v1, v2], vec![e1, e2]);
-    // Focus vaults, move down to first real vault (index 1)
-    view.handle_key(KeyCode::Tab); // Entries → Detail
-    view.handle_key(KeyCode::Tab); // Detail → Vaults
+    // Open vault picker, move down to first real vault (index 1), confirm
+    view.handle_key(KeyCode::Char('v')); // open picker
     view.handle_key(KeyCode::Char('j')); // "All Vaults" → Work (index 1)
+    view.handle_key(KeyCode::Enter); // confirm
     let visible = view.visible_entries();
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].vault_id, v1_id);
@@ -121,11 +130,15 @@ fn switching_back_to_all_vaults_shows_all() {
     let e1 = make_entry("GitHub", v1.id, EntryType::Token);
     let e2 = make_entry("Twitter", v2.id, EntryType::Token);
     let mut view = MainView::new(vec![v1, v2], vec![e1, e2]);
-    // Go to vaults column and move down then back up
-    view.handle_key(KeyCode::Tab);
-    view.handle_key(KeyCode::Tab);
-    view.handle_key(KeyCode::Char('j')); // select Work
-    view.handle_key(KeyCode::Char('k')); // back to "All Vaults"
+    // Open picker, select Work, confirm
+    view.handle_key(KeyCode::Char('v')); // open picker
+    view.handle_key(KeyCode::Char('j')); // All → Work (idx 1)
+    view.handle_key(KeyCode::Enter); // confirm
+    assert_eq!(view.visible_entries().len(), 1);
+    // Open picker again, navigate back to "All Vaults" (idx 0), confirm
+    view.handle_key(KeyCode::Char('v')); // open picker
+    view.handle_key(KeyCode::Char('k')); // Work → All Vaults (idx 0)
+    view.handle_key(KeyCode::Enter); // confirm
     assert_eq!(view.visible_entries().len(), 2);
 }
 
@@ -203,18 +216,14 @@ fn tab_moves_focus_right() {
     let mut view = MainView::new(vec![], vec![]);
     view.handle_key(KeyCode::Tab); // Entries → Detail
     assert_eq!(view.focused, Column::Detail);
-    view.handle_key(KeyCode::Tab); // Detail → Vaults
-    assert_eq!(view.focused, Column::Vaults);
-    view.handle_key(KeyCode::Tab); // Vaults → Entries
+    view.handle_key(KeyCode::Tab); // Detail → Entries
     assert_eq!(view.focused, Column::Entries);
 }
 
 #[test]
 fn shift_tab_moves_focus_left() {
     let mut view = MainView::new(vec![], vec![]);
-    view.handle_key(KeyCode::BackTab); // Entries → Vaults
-    assert_eq!(view.focused, Column::Vaults);
-    view.handle_key(KeyCode::BackTab); // Vaults → Detail
+    view.handle_key(KeyCode::BackTab); // Entries → Detail
     assert_eq!(view.focused, Column::Detail);
     view.handle_key(KeyCode::BackTab); // Detail → Entries
     assert_eq!(view.focused, Column::Entries);
@@ -348,8 +357,7 @@ fn reveal_persists_when_tabbing_away_and_back() {
     view.handle_key(KeyCode::Char('j')); // → field 1
     view.handle_key(KeyCode::Char('s')); // reveal
     assert!(view.is_field_revealed(1));
-    view.handle_key(KeyCode::Tab); // Detail → Vaults
-    view.handle_key(KeyCode::Tab); // Vaults → Entries
+    view.handle_key(KeyCode::Tab); // Detail → Entries
     view.handle_key(KeyCode::Tab); // Entries → Detail
     assert!(
         view.is_field_revealed(1),
@@ -367,7 +375,6 @@ fn reveal_clears_when_entry_selection_changes() {
     view.handle_key(KeyCode::Char('j')); // → field 1
     view.handle_key(KeyCode::Char('s')); // reveal
     assert!(view.is_field_revealed(1));
-    view.handle_key(KeyCode::Tab); // → Vaults
     view.handle_key(KeyCode::Tab); // → Entries
     view.handle_key(KeyCode::Char('j')); // select next entry
     assert!(
@@ -440,12 +447,12 @@ fn switching_vault_resets_entry_selection() {
         view.selected_entry().map(|e| e.name.as_str()),
         Some("GitLab")
     );
-    // Switch to Vaults column and pick Personal
-    view.handle_key(KeyCode::Tab); // Entries → Detail
-    view.handle_key(KeyCode::Tab); // Detail → Vaults
-    view.handle_key(KeyCode::Char('j')); // All Vaults → Work (idx 1)
+    // Open vault picker and select Personal
+    view.handle_key(KeyCode::Char('v')); // open picker
+    view.handle_key(KeyCode::Char('j')); // All → Work (idx 1)
     view.handle_key(KeyCode::Char('j')); // Work → Personal (idx 2)
-                                         // Entry selection should have reset to first entry in Personal
+    view.handle_key(KeyCode::Enter); // confirm
+                                     // Entry selection should have reset to first entry in Personal
     assert_eq!(
         view.selected_entry().map(|e| e.name.as_str()),
         Some("Twitter")
@@ -560,12 +567,11 @@ fn search_combined_with_vault_filter() {
     let e2 = make_entry("GitLab", v1.id, EntryType::Token);
     let e3 = make_entry("GitHub Personal", v2.id, EntryType::Token);
     let mut view = MainView::new(vec![v1, v2], vec![e1, e2, e3]);
-    // Select Work vault
-    view.handle_key(KeyCode::Tab); // Entries → Detail
-    view.handle_key(KeyCode::Tab); // Detail → Vaults
+    // Open vault picker and select Work
+    view.handle_key(KeyCode::Char('v')); // open picker
     view.handle_key(KeyCode::Char('j')); // All → Work
-    view.handle_key(KeyCode::Tab); // Vaults → Entries
-                                   // Now search for "git"
+    view.handle_key(KeyCode::Enter); // confirm
+                                     // Now search for "git"
     view.handle_key(KeyCode::Char('/'));
     view.handle_key(KeyCode::Char('g'));
     view.handle_key(KeyCode::Char('i'));
@@ -709,4 +715,88 @@ fn direct_a_e_d_keys_do_nothing() {
     assert_eq!(view.handle_key(KeyCode::Char('a')), MainViewAction::None);
     assert_eq!(view.handle_key(KeyCode::Char('e')), MainViewAction::None);
     assert_eq!(view.handle_key(KeyCode::Char('d')), MainViewAction::None);
+}
+
+// ── vault picker ───────────────────────────────────────────────────────────────
+
+#[test]
+fn v_opens_vault_picker() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    assert!(view.is_vault_picker_open());
+}
+
+#[test]
+fn esc_closes_vault_picker() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    assert!(view.is_vault_picker_open());
+    view.handle_key(KeyCode::Esc);
+    assert!(!view.is_vault_picker_open());
+}
+
+#[test]
+fn enter_confirms_vault_selection() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    view.handle_key(KeyCode::Char('j')); // move to first vault
+    view.handle_key(KeyCode::Enter);
+    assert!(!view.is_vault_picker_open());
+    // vault_state should be at index 1 (first vault)
+    assert_eq!(view.vault_state_selected(), Some(1));
+}
+
+#[test]
+fn j_navigates_vault_picker_down() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    view.handle_key(KeyCode::Char('j'));
+    assert_eq!(view.vault_state_selected(), Some(1));
+}
+
+#[test]
+fn k_navigates_vault_picker_up() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    view.handle_key(KeyCode::Char('j'));
+    view.handle_key(KeyCode::Char('k'));
+    assert_eq!(view.vault_state_selected(), Some(0));
+}
+
+#[test]
+fn a_in_picker_returns_open_add_vault() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    let action = view.handle_key(KeyCode::Char('a'));
+    assert!(!view.is_vault_picker_open());
+    assert_eq!(action, MainViewAction::OpenAddVault);
+}
+
+#[test]
+fn d_in_picker_returns_delete_vault() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    view.handle_key(KeyCode::Char('j')); // select first vault
+    let action = view.handle_key(KeyCode::Char('d'));
+    assert!(!view.is_vault_picker_open());
+    assert!(matches!(action, MainViewAction::DeleteVault { .. }));
+}
+
+#[test]
+fn d_in_picker_on_all_vaults_is_noop() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    // "All Vaults" is selected by default (index 0)
+    let action = view.handle_key(KeyCode::Char('d'));
+    assert!(view.is_vault_picker_open()); // still open
+    assert_eq!(action, MainViewAction::None);
+}
+
+#[test]
+fn vault_picker_blocks_other_keys() {
+    let mut view = make_view_with_vaults();
+    view.handle_key(KeyCode::Char('v'));
+    let action = view.handle_key(KeyCode::Char('x'));
+    assert!(view.is_vault_picker_open()); // still open
+    assert_eq!(action, MainViewAction::None);
 }
