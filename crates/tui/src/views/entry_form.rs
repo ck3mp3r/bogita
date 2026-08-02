@@ -64,6 +64,7 @@ pub enum FormAction {
     ValidationError(String),
     Cancel,
     ConfirmDiscard,
+    OpenVaultPicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -213,6 +214,7 @@ pub struct EntryForm {
     mode: FormMode,
     entry_id: Uuid,
     vault_id: Uuid,
+    vault_name: String,
     name_state: TextInputState,
     fields: Vec<FormField>,
     focus: Focus,
@@ -260,6 +262,7 @@ impl EntryForm {
             mode: FormMode::Add,
             entry_id: Uuid::new_v4(),
             vault_id: Uuid::nil(),
+            vault_name: String::new(),
             name_state,
             fields: Vec::new(),
             focus: Focus::default(),
@@ -345,6 +348,7 @@ impl EntryForm {
             mode: FormMode::Edit,
             entry_id: entry.id,
             vault_id: entry.vault_id,
+            vault_name: String::new(),
             name_state,
             fields,
             focus: Focus::default(),
@@ -369,6 +373,13 @@ impl EntryForm {
 
     pub fn set_vault_id(&mut self, id: Uuid) {
         self.vault_id = id;
+    }
+
+    /// Set both vault_id and vault_name. Used when the user picks a vault
+    /// from the vault picker or when the default vault is resolved on startup.
+    pub fn set_vault(&mut self, vault_id: Uuid, vault_name: String) {
+        self.vault_id = vault_id;
+        self.vault_name = vault_name;
     }
 
     /// Overwrite the value in the currently focused value/password slot.
@@ -708,6 +719,17 @@ impl EntryForm {
         // Re-run validation before every event so visual feedback is immediate
         // and confirm() has up-to-date validation_errors.
         self.validate();
+
+        // Ctrl-V opens the vault picker from anywhere in the form.
+        if let Event::Key(ke) = event {
+            if ke.kind == KeyEventKind::Press
+                && ke.code == KeyCode::Char('v')
+                && ke.modifiers.contains(KeyModifiers::CONTROL)
+            {
+                self.pending_action = FormAction::OpenVaultPicker;
+                return Outcome::Changed;
+            }
+        }
 
         // 1. Handle Tab/BackTab navigation directly.
         //    We call Focus::next()/prev() instead of Focus::handle() to avoid
@@ -1141,7 +1163,7 @@ impl EntryForm {
     /// Calculate how many field rows fit in the given area.
     /// Each field row is 3 lines. Name takes 3 lines, hint bar takes 1 line.
     fn visible_rows(&self, inner_height: u16) -> usize {
-        let available = inner_height.saturating_sub(3 + 1); // name(3) + hint(1)
+        let available = inner_height.saturating_sub(1 + 3 + 1); // vault(1) + name(3) + hint(1)
         (available / 3) as usize
     }
 
@@ -1258,12 +1280,15 @@ impl EntryForm {
         let end = (self.scroll_offset + visible).min(self.fields.len());
         let visible_fields = &mut self.fields[self.scroll_offset..end];
 
-        // Rows: name + one row per visible field + hint bar.
-        // All rows are fixed at 3 lines.
-        let row_count = 1 + visible_fields.len() + 1;
+        // Rows: vault name + name + one row per visible field + hint bar.
+        // Vault name is 1 line, name is 3 lines, fields are 3 lines each, hint is 1 line.
+        let row_count = 1 + 1 + visible_fields.len() + 1;
         let constraints: Vec<Constraint> = (0..row_count)
             .map(|i| {
                 if i == row_count - 1 {
+                    Constraint::Length(1)
+                } else if i == 0 {
+                    // Vault name row — 1 line
                     Constraint::Length(1)
                 } else {
                     Constraint::Length(3)
@@ -1276,7 +1301,31 @@ impl EntryForm {
             .constraints(constraints)
             .split(inner);
 
-        // Row 0: name
+        // Row 0: vault name (read-only display)
+        let vault_text = if self.vault_name.is_empty() {
+            " Vault: (none) ".to_string()
+        } else {
+            format!(" Vault: {} ", self.vault_name)
+        };
+        let vault_hint = if self.vault_name.is_empty() {
+            String::new()
+        } else {
+            " [v] change vault ".to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    &vault_text,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(vault_hint, Style::default().fg(Color::DarkGray)),
+            ])),
+            rows[0],
+        );
+
+        // Row 1: name
         let name_focused = self.name_state.focus.get();
         let name_has_error = self.validation_errors.contains(&ValidationIssue::EmptyName);
         let name_border_color = if name_has_error {
@@ -1307,7 +1356,7 @@ impl EntryForm {
                     .border_style(Style::default().fg(name_border_color))
                     .title(name_title),
             );
-        frame.render_stateful_widget(name_widget, rows[0], &mut self.name_state);
+        frame.render_stateful_widget(name_widget, rows[1], &mut self.name_state);
         if self.name_state.focus.get() {
             if let Some((cx, cy)) = self.name_state.screen_cursor() {
                 frame.set_cursor_position((
@@ -1317,9 +1366,9 @@ impl EntryForm {
             }
         }
 
-        // Rows 1..: fields — [key 35%] [value 50%] [type 15%]
+        // Rows 2..: fields — [key 35%] [value 50%] [type 15%]
         for (rel_i, ff) in visible_fields.iter_mut().enumerate() {
-            if let Some(row) = rows.get(rel_i + 1) {
+            if let Some(row) = rows.get(rel_i + 2) {
                 let cols = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([

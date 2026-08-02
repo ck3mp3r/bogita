@@ -25,6 +25,7 @@ where
             INSERT INTO entries (id, vault_id, name, entry_type, created_at, modified_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(id) DO UPDATE SET
+                vault_id = excluded.vault_id,
                 name = excluded.name,
                 entry_type = excluded.entry_type,
                 modified_at = excluded.modified_at

@@ -1,8 +1,9 @@
 use bogita_cli::args::{AgentCommands, Cli, Commands, EntryCommands, VaultCommands};
 use bogita_cli::handlers::entry::{handle_get, handle_ls, handle_search, EntryOutput};
 use bogita_cli::handlers::vault::{handle_vault, VaultOutput};
-use bogita_core::app::App;
-use bogita_core::domain::{FieldType, FieldValue};
+use bogita_core::app::{App, InitResult};
+use bogita_core::domain::{FieldType, FieldValue, SecretString};
+use bogita_core::storage::keychain::KeychainAdapter;
 use bogita_tui::app::Tui;
 use bogita_tui::context::TuiContext;
 use clap::Parser;
@@ -18,8 +19,8 @@ async fn main() {
         }
 
         // ── Entry TUI mutations ────────────────────────────────────────────
-        Some(Commands::Entry(EntryCommands::Add { name, vault })) => {
-            launch_tui(TuiContext::AddEntry { name, vault }).await;
+        Some(Commands::Entry(EntryCommands::Add { name, .. })) => {
+            launch_tui(TuiContext::AddEntry { name }).await;
         }
         Some(Commands::Entry(EntryCommands::Edit { name, vault })) => {
             launch_tui(TuiContext::EditEntry { name, vault }).await;
@@ -33,23 +34,132 @@ async fn main() {
             launch_tui(TuiContext::AddVault { name }).await;
         }
 
+        // ── Lock / Unlock (handled before init_app) ─────────────────────────
+        Some(Commands::Vault(VaultCommands::Lock)) => match App::init().await {
+            InitResult::Ready(mut app) => {
+                app.lock().unwrap_or_else(|e| {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                });
+                println!("vault locked");
+            }
+            InitResult::Locked(_) => {
+                println!("vault is already locked");
+            }
+            _ => {
+                println!("vault is not initialized");
+            }
+        },
+        Some(Commands::Vault(VaultCommands::Unlock)) => match App::init().await {
+            InitResult::Ready(_) => {
+                println!("vault is already unlocked");
+            }
+            InitResult::Locked(parts) => {
+                let passphrase = prompt_passphrase("Enter passphrase: ");
+                App::complete_unlock(parts, &passphrase)
+                    .await
+                    .unwrap_or_else(|e| {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    });
+                println!("vault unlocked");
+            }
+            InitResult::NeedsPassphrase(parts) => {
+                let passphrase = prompt_passphrase("Set a passphrase: ");
+                App::complete_first_run(parts, &passphrase)
+                    .await
+                    .unwrap_or_else(|e| {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    });
+                println!("vault unlocked");
+            }
+        },
+
         // ── Read-only / stateless CLI ──────────────────────────────────────
         Some(cmd) => {
-            let app = App::init().await.unwrap_or_else(|e| {
-                eprintln!("error: {e}");
-                std::process::exit(1);
-            });
+            let app = init_app().await;
             run_cli(cmd, app).await;
         }
     }
 }
 
+/// Initialize the app, handling all init paths.
+/// For CLI mode, we prompt for passphrase if needed.
+async fn init_app() -> App<KeychainAdapter> {
+    match App::init().await {
+        InitResult::Ready(app) => app,
+        InitResult::NeedsPassphrase(parts) => {
+            eprintln!("First run detected. Please set a passphrase to encrypt your identity.");
+            let passphrase = prompt_passphrase("Enter passphrase: ");
+            App::complete_first_run(parts, &passphrase)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                })
+        }
+        InitResult::Locked(parts) => {
+            eprintln!("Vault is locked. Enter your passphrase to unlock.");
+            let passphrase = prompt_passphrase("Enter passphrase: ");
+            App::complete_unlock(parts, &passphrase)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                })
+        }
+    }
+}
+
+/// Prompt for a passphrase (simple stdin read).
+fn prompt_passphrase(prompt: &str) -> SecretString {
+    use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok();
+    SecretString::from(line.trim().to_string())
+}
+
+/// Returns `true` if a command requires the vault to be unlocked (identity loaded).
+fn command_needs_identity(cmd: &Commands) -> bool {
+    match cmd {
+        Commands::Entry(entry) => matches!(
+            entry,
+            EntryCommands::Ls { .. }
+                | EntryCommands::Get { .. }
+                | EntryCommands::Search { .. }
+                | EntryCommands::Cp { .. }
+        ),
+        Commands::Vault(_) | Commands::Agent(_) => false,
+    }
+}
+
 /// Context passed to the TUI on startup to pre-focus the right view.
 async fn launch_tui(ctx: TuiContext) {
-    let app = App::init().await.unwrap_or_else(|e| {
-        eprintln!("error: {e}");
-        std::process::exit(1);
-    });
+    let init = App::init().await;
+    let app = match init {
+        InitResult::Ready(app) => app,
+        InitResult::Locked(parts) => {
+            let passphrase = prompt_passphrase("Enter passphrase: ");
+            App::complete_unlock(parts, &passphrase)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                })
+        }
+        InitResult::NeedsPassphrase(parts) => {
+            let passphrase = prompt_passphrase("Set a passphrase: ");
+            App::complete_first_run(parts, &passphrase)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                })
+        }
+    };
     let tui = Tui::new(app, ctx).await.unwrap_or_else(|e| {
         eprintln!("error initialising tui: {e}");
         std::process::exit(1);
@@ -60,12 +170,24 @@ async fn launch_tui(ctx: TuiContext) {
     }
 }
 
-async fn run_cli(cmd: Commands, app: App) {
+async fn run_cli(cmd: Commands, app: App<KeychainAdapter>) {
+    if app.is_locked && command_needs_identity(&cmd) {
+        eprintln!("error: vault is locked — run `bogita unlock`");
+        return;
+    }
+
+    let identity = match app.identity.as_ref() {
+        Some(id) => id,
+        None => {
+            eprintln!("error: vault is locked — run `bogita unlock`");
+            return;
+        }
+    };
+
     match cmd {
         Commands::Entry(entry_cmd) => match entry_cmd {
             EntryCommands::Ls { vault } => {
-                let output =
-                    handle_ls(EntryCommands::Ls { vault }, app.registry, app.identity).await;
+                let output = handle_ls(EntryCommands::Ls { vault }, app.registry, identity).await;
                 match output {
                     Ok(EntryOutput::List(entries)) => {
                         for entry in entries {
@@ -80,7 +202,7 @@ async fn run_cli(cmd: Commands, app: App) {
                 let output = handle_get(
                     EntryCommands::Get { name, field, vault },
                     app.registry,
-                    app.identity,
+                    identity,
                 )
                 .await;
                 match output {
@@ -107,7 +229,7 @@ async fn run_cli(cmd: Commands, app: App) {
                 let output = handle_search(
                     EntryCommands::Search { query, vault },
                     app.registry,
-                    app.identity,
+                    identity,
                 )
                 .await;
                 match output {
@@ -132,7 +254,7 @@ async fn run_cli(cmd: Commands, app: App) {
                         vault: vault.clone(),
                     },
                     app.registry,
-                    app.identity,
+                    identity,
                 )
                 .await;
                 match output {
@@ -172,9 +294,10 @@ async fn run_cli(cmd: Commands, app: App) {
                     Err(e) => eprintln!("error: {e}"),
                 }
             }
-            VaultCommands::Lock { .. }
-            | VaultCommands::Unlock { .. }
-            | VaultCommands::Sync { .. } => {
+            VaultCommands::Lock | VaultCommands::Unlock => {
+                unreachable!("lock/unlock handled before run_cli")
+            }
+            VaultCommands::Sync { .. } => {
                 eprintln!("not yet implemented");
             }
             VaultCommands::Add { .. } => unreachable!("vault add handled as TUI deep-link"),

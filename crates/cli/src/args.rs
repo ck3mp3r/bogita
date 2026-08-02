@@ -93,10 +93,10 @@ pub enum EntryCommands {
 pub enum VaultCommands {
     /// List all vaults
     List,
-    /// Lock a vault
-    Lock { name: String },
-    /// Unlock a vault
-    Unlock { name: String },
+    /// Lock the vault (remove identity from keychain)
+    Lock,
+    /// Unlock the vault (prompt for passphrase)
+    Unlock,
     /// Sync a vault with its git backend
     Sync { name: Option<String> },
     /// Set the default vault

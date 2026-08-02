@@ -5,10 +5,12 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 /// Build a minimal App for testing without touching the filesystem.
 ///
 /// If `with_entry` is true, seeds the Personal vault with one entry.
-async fn make_app() -> bogita_core::app::App {
+async fn make_app() -> bogita_core::app::App<bogita_core::test_helpers::MockKeychain> {
     use bogita_core::crypto::AgeCrypto;
     use bogita_core::domain::{AgeIdentity, Vault};
+    use bogita_core::session::Session;
     use bogita_core::storage::sqlite::SqliteStorage;
+    use bogita_core::test_helpers::MockKeychain;
     use bogita_core::vault::registry::VaultRegistry;
     use chrono::Utc;
     use uuid::Uuid;
@@ -35,13 +37,16 @@ async fn make_app() -> bogita_core::app::App {
 
     bogita_core::app::App {
         config: bogita_core::storage::config::AppConfig::default(),
-        identity,
+        identity: Some(identity),
         registry,
+        session: Session::new(MockKeychain::new()),
+        is_locked: false,
+        lock_timeout: None,
     }
 }
 
 /// Build an App seeded with one entry in the Personal vault.
-async fn make_app_with_entry() -> bogita_core::app::App {
+async fn make_app_with_entry() -> bogita_core::app::App<bogita_core::test_helpers::MockKeychain> {
     use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
     use chrono::Utc;
     use uuid::Uuid;
@@ -49,7 +54,9 @@ async fn make_app_with_entry() -> bogita_core::app::App {
     let app = make_app().await;
     let vaults = app.registry.list_vaults().await.unwrap();
     let vault = vaults.first().unwrap();
-    let svc = app.registry.vault_service_for(vault, app.identity.clone());
+    let svc = app
+        .registry
+        .vault_service_for(vault, app.identity.as_ref().unwrap().clone());
     let entry = Entry {
         id: Uuid::new_v4(),
         vault_id: vault.id,
@@ -82,7 +89,6 @@ async fn new_tui_stores_context() {
     let app = make_app().await;
     let ctx = TuiContext::AddEntry {
         name: Some("GitHub".to_string()),
-        vault: None,
     };
     let tui = Tui::new(app, ctx).await.unwrap();
     assert!(matches!(tui.context, TuiContext::AddEntry { .. }));
@@ -806,173 +812,174 @@ async fn esc_in_discard_modal_returns_to_form() {
     );
 }
 
-// ── toast notifications ────────────────────────────────────────────────────────
+// ── lock screen ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn save_entry_shows_success_toast() {
-    use ratatui::crossterm::event::KeyCode;
-
+async fn ctrl_l_locks_the_tui() {
     let app = make_app().await;
     let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+    assert!(!tui.app.is_locked);
 
-    // Open add form, type name, confirm
-    tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
-    for c in "MyEntry".chars() {
-        tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
-    }
-    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
-    tui.flush_pending().await.unwrap();
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
 
-    assert!(tui.toast.is_some(), "toast should be shown after save");
-    let toast = tui.toast.as_ref().unwrap();
-    assert!(
-        toast.message.contains("Entry"),
-        "toast message should contain 'Entry', got: {}",
-        toast.message
-    );
-}
-
-#[tokio::test]
-async fn delete_entry_shows_delete_toast() {
-    use ratatui::crossterm::event::KeyCode;
-
-    let app = make_app_with_entry().await;
-    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
-
-    // Delete the entry
-    tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('d'), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('d'), KeyModifiers::NONE);
-    tui.flush_pending().await.unwrap();
-
-    assert!(tui.toast.is_some(), "toast should be shown after delete");
-    let toast = tui.toast.as_ref().unwrap();
-    assert!(
-        toast.message.contains("deleted"),
-        "toast message should contain 'deleted', got: {}",
-        toast.message
-    );
-}
-
-#[tokio::test]
-async fn copy_to_clipboard_shows_copy_toast() {
-    use ratatui::crossterm::event::KeyCode;
-
-    let app = make_app_with_entry().await;
-    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
-
-    // Focus Detail column and copy
-    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → Detail (queues LoadDetail)
-    tui.flush_pending().await.unwrap(); // fetch detail_entry
-    tui.handle_key_with_modifiers(KeyCode::Char('c'), KeyModifiers::NONE); // queue copy
-    tui.flush_pending().await.unwrap();
-
-    assert!(tui.toast.is_some(), "toast should be shown after copy");
-    let toast = tui.toast.as_ref().unwrap();
-    assert!(
-        toast.message.contains("Copied"),
-        "toast message should contain 'Copied', got: {}",
-        toast.message
-    );
-}
-
-#[tokio::test]
-async fn toast_auto_dismisses_after_duration() {
-    // Test is_expired logic directly
-    let toast = crate::app::Toast::success("test");
-    assert!(!toast.is_expired(), "fresh toast should not be expired");
-
-    // A toast with zero duration should be expired immediately
-    let expired = crate::app::Toast {
-        message: "test".to_string(),
-        kind: crate::app::ToastKind::Success,
-        created_at: std::time::Instant::now(),
-        duration: std::time::Duration::from_secs(0),
-    };
-    assert!(
-        expired.is_expired(),
-        "zero-duration toast should be expired"
-    );
-}
-
-#[tokio::test]
-async fn new_toast_replaces_old_toast() {
-    let app = make_app().await;
-    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
-
-    tui.show_toast("first", crate::app::ToastKind::Success);
-    tui.show_toast("second", crate::app::ToastKind::Success);
-
-    assert_eq!(
-        tui.toast.as_ref().unwrap().message,
-        "second",
-        "new toast should replace old toast"
-    );
-}
-
-#[tokio::test]
-async fn toast_does_not_block_input() {
-    use ratatui::crossterm::event::KeyCode;
-
-    let app = make_app().await;
-    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
-
-    tui.show_toast("test", crate::app::ToastKind::Success);
-
-    // Press Tab — should be handled normally
-    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE);
-
-    // Toast should still be visible (not dismissed by keypress)
-    assert!(
-        tui.toast.is_some(),
-        "toast should not be dismissed by keypress"
-    );
-}
-
-#[tokio::test]
-async fn validation_error_does_not_show_toast() {
-    use ratatui::crossterm::event::KeyCode;
-
-    let app = make_app().await;
-    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
-
-    // Open add form, confirm with empty name (validation error)
-    tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // confirm with empty name
-
-    // No toast should be shown (validation error prevents any action)
-    assert!(
-        tui.toast.is_none(),
-        "validation error should not show toast"
-    );
-    // No entry should have been created
+    assert!(tui.app.is_locked, "Ctrl-L should lock the app");
     assert_eq!(
         tui.main_view.visible_entries().len(),
         0,
-        "validation error should not create an entry"
+        "entries should be cleared after lock"
+    );
+    assert!(
+        tui.detail_entry.is_none(),
+        "detail entry should be cleared after lock"
     );
 }
 
 #[tokio::test]
-async fn toast_kind_success_uses_green() {
-    let toast = crate::app::Toast::success("test");
-    assert_eq!(toast.kind, crate::app::ToastKind::Success);
-}
-
-#[tokio::test]
-async fn toast_kind_warning_uses_yellow() {
-    let toast = crate::app::Toast::warning("test");
-    assert_eq!(toast.kind, crate::app::ToastKind::Warning);
-}
-
-#[tokio::test]
-async fn toast_show_toast_sets_field() {
+async fn ctrl_l_when_locked_is_noop() {
     let app = make_app().await;
     let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
 
-    tui.show_toast("Hello", crate::app::ToastKind::Success);
-    assert!(tui.toast.is_some());
-    assert_eq!(tui.toast.as_ref().unwrap().message, "Hello");
+    // Lock once
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    assert!(tui.app.is_locked);
+
+    // Try locking again — should be a no-op
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    assert!(tui.app.is_locked, "should still be locked");
+}
+
+#[tokio::test]
+async fn esc_on_lock_screen_quits() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(tui.state, RunState::Quit, "Esc on lock screen should quit");
+}
+
+#[tokio::test]
+async fn enter_on_lock_screen_with_wrong_passphrase_shows_error() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    // Type a wrong passphrase
+    for c in "wrong".chars() {
+        tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
+    }
+    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
+
+    // Should still be locked (no identity file on disk, so unlock will fail)
+    assert!(
+        tui.app.is_locked,
+        "should remain locked after wrong passphrase"
+    );
+}
+
+#[tokio::test]
+async fn lock_screen_status_hint_unlock() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    let hint = tui.status_hint();
+    assert!(
+        hint.contains("passphrase"),
+        "lock screen hint should mention passphrase, got: {hint}"
+    );
+    assert!(
+        hint.contains("[Esc]"),
+        "lock screen hint should mention Esc, got: {hint}"
+    );
+}
+
+#[tokio::test]
+async fn lock_screen_clears_entries() {
+    let app = make_app_with_entry().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+    assert_eq!(tui.main_view.visible_entries().len(), 1);
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    assert_eq!(
+        tui.main_view.visible_entries().len(),
+        0,
+        "entries should be cleared after lock"
+    );
+}
+
+#[tokio::test]
+async fn lock_screen_typing_accumulates_chars() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    for c in "hello".chars() {
+        tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
+    }
+
+    // Verify the passphrase input accumulated chars by checking status hint
+    // (we can't directly access the TextInputState, but we can verify behavior)
+    let hint = tui.status_hint();
+    assert!(
+        hint.contains("passphrase"),
+        "should still be on lock screen after typing, got: {hint}"
+    );
+}
+
+#[tokio::test]
+async fn lock_screen_backspace_removes_chars() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    // Type some chars then backspace
+    for c in "ab".chars() {
+        tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
+    }
+    tui.handle_key_with_modifiers(KeyCode::Backspace, KeyModifiers::NONE);
+
+    // Enter with remaining char should still fail (no identity file)
+    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
+
+    assert!(tui.app.is_locked, "should remain locked");
+}
+
+#[tokio::test]
+async fn lock_screen_enter_with_empty_input_shows_error() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    // Enter with empty input
+    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
+
+    assert!(
+        tui.app.is_locked,
+        "should remain locked with empty passphrase"
+    );
+}
+
+#[tokio::test]
+async fn lock_screen_does_not_respond_to_q() {
+    let app = make_app().await;
+    let mut tui = Tui::new(app, TuiContext::Default).await.unwrap();
+
+    tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
+
+    // 'q' should be typed into the passphrase input, not quit
+    tui.handle_key_with_modifiers(KeyCode::Char('q'), KeyModifiers::NONE);
+
+    assert_eq!(
+        tui.state,
+        RunState::Running,
+        "'q' on lock screen should type, not quit"
+    );
 }

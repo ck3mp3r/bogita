@@ -6,10 +6,7 @@ pub enum TuiContext {
     /// Default: open the main vault+entry list view.
     Default,
     /// Open the "add entry" form, optionally pre-filling the name.
-    AddEntry {
-        name: Option<String>,
-        vault: Option<String>,
-    },
+    AddEntry { name: Option<String> },
     /// Open the "edit entry" form for the named entry.
     EditEntry { name: String, vault: Option<String> },
     /// Open the "delete entry" confirmation for the named entry.

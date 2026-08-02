@@ -172,19 +172,19 @@ fn vault_list_parses() {
 
 #[test]
 fn vault_lock_parses() {
-    let cli = parse(&["vault", "lock", "personal"]);
+    let cli = parse(&["vault", "lock"]);
     assert!(matches!(
         cli.command,
-        Some(Commands::Vault(VaultCommands::Lock { ref name })) if name == "personal"
+        Some(Commands::Vault(VaultCommands::Lock))
     ));
 }
 
 #[test]
 fn vault_unlock_parses() {
-    let cli = parse(&["vault", "unlock", "personal"]);
+    let cli = parse(&["vault", "unlock"]);
     assert!(matches!(
         cli.command,
-        Some(Commands::Vault(VaultCommands::Unlock { ref name })) if name == "personal"
+        Some(Commands::Vault(VaultCommands::Unlock))
     ));
 }
 

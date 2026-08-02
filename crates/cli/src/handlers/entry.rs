@@ -45,7 +45,7 @@ where
 pub async fn handle_ls<S, C>(
     cmd: EntryCommands,
     registry: VaultRegistry<S, C>,
-    identity: AgeIdentity,
+    identity: &AgeIdentity,
 ) -> Result<EntryOutput>
 where
     S: Storage,
@@ -57,7 +57,7 @@ where
     };
 
     let vault = resolve_vault(vault_name, &registry).await?;
-    let svc = registry.vault_service_for(&vault, identity);
+    let svc = registry.vault_service_for(&vault, identity.clone());
     let entries = svc.list_entries(vault.id, None).await?;
     Ok(EntryOutput::List(entries))
 }
@@ -70,7 +70,7 @@ where
 pub async fn handle_get<S, C>(
     cmd: EntryCommands,
     registry: VaultRegistry<S, C>,
-    identity: AgeIdentity,
+    identity: &AgeIdentity,
 ) -> Result<EntryOutput>
 where
     S: Storage,
@@ -82,7 +82,7 @@ where
     };
 
     let vault = resolve_vault(vault_name, &registry).await?;
-    let svc = registry.vault_service_for(&vault, identity);
+    let svc = registry.vault_service_for(&vault, identity.clone());
     let entries = svc.list_entries(vault.id, None).await?;
 
     let entry = entries
@@ -116,7 +116,7 @@ where
 pub async fn handle_search<S, C>(
     cmd: EntryCommands,
     registry: VaultRegistry<S, C>,
-    identity: AgeIdentity,
+    identity: &AgeIdentity,
 ) -> Result<EntryOutput>
 where
     S: Storage,
@@ -128,7 +128,7 @@ where
     };
 
     let vault = resolve_vault(vault_name, &registry).await?;
-    let svc = registry.vault_service_for(&vault, identity);
+    let svc = registry.vault_service_for(&vault, identity.clone());
     let entries = svc.list_entries(vault.id, Some(query)).await?;
     Ok(EntryOutput::List(entries))
 }

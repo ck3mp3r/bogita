@@ -28,6 +28,10 @@ pub enum Error {
     #[error("config error: {0}")]
     Config(#[from] ConfigError),
 
+    /// Session errors
+    #[error("session error: {0}")]
+    Session(#[from] SessionError),
+
     /// I/O errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -70,6 +74,9 @@ pub enum CryptoError {
 
     #[error("invalid identity: {0}")]
     InvalidIdentity(String),
+
+    #[error("keychain error: {0}")]
+    KeychainError(String),
 }
 
 #[derive(Debug, Error)]
@@ -112,4 +119,13 @@ pub enum ValidationError {
 
     #[error("invalid OTP URI: {0}")]
     InvalidOtpUri(String),
+}
+
+#[derive(Debug, Error)]
+pub enum SessionError {
+    #[error("vault is locked — run `bogita unlock`")]
+    Locked,
+
+    #[error("keychain unavailable: {0}")]
+    KeychainUnavailable(String),
 }

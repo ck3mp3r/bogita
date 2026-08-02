@@ -24,15 +24,11 @@ where
             let vaults = registry.list_vaults().await?;
             Ok(VaultOutput::List(vaults))
         }
-        VaultCommands::Lock { name } => {
-            let _ = name;
+        VaultCommands::Lock => {
             // Lock/unlock is session-state — stub until TUI session layer (Phase 5)
             Ok(VaultOutput::Ok)
         }
-        VaultCommands::Unlock { name } => {
-            let _ = name;
-            Ok(VaultOutput::Ok)
-        }
+        VaultCommands::Unlock => Ok(VaultOutput::Ok),
         VaultCommands::Sync { name } => {
             let _ = name;
             // Git sync stub — backend not yet implemented

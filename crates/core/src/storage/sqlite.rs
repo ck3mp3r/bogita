@@ -55,6 +55,15 @@ where
         Ok(Self { pool, crypto })
     }
 
+    /// Create an in-memory SQLite storage adapter (for fallback / testing).
+    pub fn new_in_memory(crypto: C) -> Result<Self> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("sqlite::memory:")
+            .map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Ok(Self { pool, crypto })
+    }
+
     /// Encrypt a field value if the field is marked as encrypted
     pub(crate) fn encrypt_field_value(
         &self,

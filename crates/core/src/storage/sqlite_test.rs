@@ -324,6 +324,62 @@ async fn test_search_finds_plaintext_fields() {
 }
 
 #[tokio::test]
+async fn save_entry_updates_vault_id_on_conflict() {
+    let storage = create_test_storage().await;
+    let (recipients, identity) = create_test_keys();
+    let vault_a = Uuid::new_v4();
+    let vault_b = Uuid::new_v4();
+    seed_vault(&storage, vault_a).await;
+    seed_vault(&storage, vault_b).await;
+
+    let entry = make_entry(
+        vault_a,
+        "Movable Entry",
+        vec![plain_field("username", "alice", 0)],
+    );
+
+    // Save to vault A
+    storage
+        .save_entry(&entry, &recipients)
+        .await
+        .expect("initial save should succeed");
+
+    // Verify it appears in vault A
+    let entries_a = storage
+        .list_entries(vault_a, None, &identity)
+        .await
+        .expect("list vault A should succeed");
+    assert_eq!(entries_a.len(), 1);
+    assert_eq!(entries_a[0].id, entry.id);
+
+    // Update entry to vault B
+    let moved = Entry {
+        vault_id: vault_b,
+        ..entry
+    };
+    storage
+        .save_entry(&moved, &recipients)
+        .await
+        .expect("update vault_id should succeed");
+
+    // Verify it no longer appears in vault A
+    let entries_a = storage
+        .list_entries(vault_a, None, &identity)
+        .await
+        .expect("list vault A should succeed");
+    assert_eq!(entries_a.len(), 0, "entry should be removed from vault A");
+
+    // Verify it now appears in vault B
+    let entries_b = storage
+        .list_entries(vault_b, None, &identity)
+        .await
+        .expect("list vault B should succeed");
+    assert_eq!(entries_b.len(), 1, "entry should appear in vault B");
+    assert_eq!(entries_b[0].id, entry.id);
+    assert_eq!(entries_b[0].vault_id, vault_b);
+}
+
+#[tokio::test]
 async fn test_search_does_not_match_encrypted_fields() {
     let storage = create_test_storage().await;
     let (recipients, identity) = create_test_keys();

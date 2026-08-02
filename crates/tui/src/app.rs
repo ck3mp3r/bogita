@@ -8,14 +8,16 @@ use crate::views::vault_form::{VaultForm, VaultFormAction};
 use bogita_core::app::App;
 use bogita_core::domain::Entry;
 use bogita_core::error::Result;
+use bogita_core::ports::KeychainStore;
 use bogita_core::service::clipboard::{ArboardBackend, ClipboardService};
+use rat_widget::text_input::TextInputState;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Running state of the TUI.
@@ -55,11 +57,22 @@ enum ActiveView {
     },
     /// Vault creation form.
     VaultForm(VaultForm),
+    /// Vault picker overlay launched from the entry form.
+    /// Holds the form while the picker is open so the user can select a vault.
+    FormVaultPicker {
+        form: EntryForm,
+        vault_state: ListState,
+    },
     /// Delete vault confirmation modal overlay.
     ConfirmDeleteVault {
         vault_id: Uuid,
         /// Vault name shown in the prompt.
         name: String,
+    },
+    /// Lock screen — shown when the vault is locked.
+    Locked {
+        passphrase_input: rat_widget::text_input::TextInputState,
+        error: Option<String>,
     },
 }
 
@@ -88,47 +101,16 @@ enum AppAction {
     DeleteVault {
         vault_id: Uuid,
     },
+    /// Reload entries after unlock.
+    ReloadEntries,
 }
 
-/// Kind of toast notification — controls color.
+/// Kind of status bar message — controls color.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ToastKind {
+pub enum MessageKind {
     Success,
+    Error,
     Info,
-    Warning,
-}
-
-/// Transient notification message shown briefly after successful actions.
-#[derive(Clone, Debug)]
-pub struct Toast {
-    pub message: String,
-    pub kind: ToastKind,
-    pub created_at: std::time::Instant,
-    pub duration: std::time::Duration,
-}
-
-impl Toast {
-    pub fn success(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            kind: ToastKind::Success,
-            created_at: std::time::Instant::now(),
-            duration: std::time::Duration::from_secs(3),
-        }
-    }
-
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            kind: ToastKind::Warning,
-            created_at: std::time::Instant::now(),
-            duration: std::time::Duration::from_secs(5),
-        }
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.created_at.elapsed() >= self.duration
-    }
 }
 
 /// A deferred clipboard copy set by [`Tui::handle_key`] and drained by
@@ -141,10 +123,10 @@ pub struct PendingCopy {
 }
 
 /// Top-level TUI application.
-pub struct Tui {
+pub struct Tui<K: KeychainStore> {
     pub context: TuiContext,
     pub state: RunState,
-    pub app: App,
+    pub app: App<K>,
     pub main_view: MainView,
     active: ActiveView,
     pending: Option<AppAction>,
@@ -152,31 +134,51 @@ pub struct Tui {
     pub error_message: Option<String>,
     /// Currently selected entry, fetched and decrypted on demand when selection changes.
     pub detail_entry: Option<Entry>,
-    /// Transient toast notification shown after successful actions.
-    pub toast: Option<Toast>,
+    /// Transient status bar message shown after actions.
+    pub status_message: Option<(String, Instant)>,
+    /// Kind of the current status bar message.
+    pub status_message_kind: MessageKind,
+    /// Timestamp of the last keypress — used for auto-lock.
+    pub last_keypress: Instant,
 }
 
-impl Tui {
+impl<K: KeychainStore> Tui<K> {
     /// Create a new `Tui` with the given startup context.
     ///
     /// Loads all vaults and their entries from the registry so `MainView`
     /// starts with real data rather than empty lists.
-    pub async fn new(app: App, context: TuiContext) -> bogita_core::error::Result<Self> {
+    pub async fn new(app: App<K>, context: TuiContext) -> bogita_core::error::Result<Self> {
         // Load vaults
         let vaults = app.registry.list_vaults().await?;
 
-        // Load entries from every vault
+        // Load entries from every vault (skip if locked)
         let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
-        for vault in &vaults {
-            let svc = app.registry.vault_service_for(vault, app.identity.clone());
-            let entries = svc.list_entries(vault.id, None).await?;
-            all_entries.extend(entries);
+        if let Some(identity) = &app.identity {
+            for vault in &vaults {
+                let svc = app.registry.vault_service_for(vault, identity.clone());
+                let entries = svc.list_entries(vault.id, None).await?;
+                all_entries.extend(entries);
+            }
         }
 
-        let main_view = MainView::new(vaults, all_entries.clone());
+        let main_view = MainView::new(vaults.clone(), all_entries.clone());
         let detail_entry = all_entries.into_iter().next();
         let active = match &context {
-            TuiContext::AddEntry { name, .. } => ActiveView::Form(EntryForm::new_add(name.clone())),
+            TuiContext::AddEntry { name } => {
+                let vault_id = vaults
+                    .iter()
+                    .find(|v| v.is_default)
+                    .map(|v| v.id)
+                    .unwrap_or_else(|| vaults.first().map(|v| v.id).unwrap_or(Uuid::nil()));
+                let vault_name = vaults
+                    .iter()
+                    .find(|v| v.id == vault_id)
+                    .map(|v| v.name.clone())
+                    .unwrap_or_default();
+                let mut form = EntryForm::new_add(name.clone());
+                form.set_vault(vault_id, vault_name);
+                ActiveView::Form(form)
+            }
             TuiContext::AddVault { name } => ActiveView::VaultForm(VaultForm::new(name.clone())),
             _ => ActiveView::Main,
         };
@@ -190,23 +192,19 @@ impl Tui {
             pending_copy: None,
             error_message: None,
             detail_entry,
-            toast: None,
+            status_message: None,
+            status_message_kind: MessageKind::Info,
+            last_keypress: Instant::now(),
         })
-    }
-
-    /// Show a transient toast notification.
-    pub(crate) fn show_toast(&mut self, message: impl Into<String>, kind: ToastKind) {
-        let toast = match kind {
-            ToastKind::Success => Toast::success(message),
-            ToastKind::Warning => Toast::warning(message),
-            ToastKind::Info => Toast::success(message), // Info uses same duration as Success
-        };
-        self.toast = Some(toast);
     }
 
     /// Run the TUI event loop.
     pub async fn run(mut self) -> Result<()> {
         let terminal = ratatui::init();
+        ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::cursor::SetCursorStyle::SteadyBar
+        )?;
         let result = self.event_loop(terminal).await;
         ratatui::restore();
         result
@@ -218,22 +216,55 @@ impl Tui {
             if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
+                        self.last_keypress = Instant::now();
                         self.handle_key_with_modifiers(key.code, key.modifiers);
                         self.flush_pending().await?;
                     }
                 }
             }
-            // Auto-dismiss expired toasts
-            if self.toast.as_ref().is_some_and(|t| t.is_expired()) {
-                self.toast = None;
+            // Auto-lock check: lock after lock_timeout seconds of inactivity
+            if let Some(timeout) = self.app.lock_timeout {
+                if !self.app.is_locked
+                    && self.last_keypress.elapsed() >= Duration::from_secs(timeout)
+                {
+                    self.lock();
+                }
+            }
+            // Auto-dismiss expired status messages
+            if let Some((_, created_at)) = &self.status_message {
+                if created_at.elapsed() >= Duration::from_secs(3) {
+                    self.status_message = None;
+                }
             }
         }
         Ok(())
     }
 
+    /// Lock the vault: clear identity, clear entries, show lock screen.
+    fn lock(&mut self) {
+        if let Err(e) = self.app.lock() {
+            self.error_message = Some(e.to_string());
+            return;
+        }
+        self.main_view.reload_entries(Vec::new());
+        self.detail_entry = None;
+        self.active = ActiveView::Locked {
+            passphrase_input: TextInputState::named("passphrase"),
+            error: None,
+        };
+    }
+
     /// Handle a key press with full modifier info.
     /// Used by the event loop to pass Ctrl-r to the form.
     pub(crate) fn handle_key_with_modifiers(&mut self, key: KeyCode, modifiers: KeyModifiers) {
+        // Ctrl-L: lock the vault (only from Main view, not locked)
+        if key == KeyCode::Char('l') && modifiers == KeyModifiers::CONTROL {
+            if !self.app.is_locked {
+                self.lock();
+            }
+            return;
+        }
+
         // Error overlay: [Esc] or [Enter] dismisses.
         if self.error_message.is_some() {
             if matches!(key, KeyCode::Esc | KeyCode::Enter) {
@@ -290,6 +321,13 @@ impl Tui {
                             self.active = ActiveView::Main;
                         }
                     }
+                    FormAction::OpenVaultPicker => {
+                        let placeholder = EntryForm::new_add(None);
+                        let form = std::mem::replace(f, placeholder);
+                        let mut vault_state = ListState::default();
+                        vault_state.select(Some(0));
+                        self.active = ActiveView::FormVaultPicker { form, vault_state };
+                    }
                     FormAction::None | FormAction::ValidationError(_) => {}
                 }
             }
@@ -312,6 +350,44 @@ impl Tui {
                     PasswordGenAction::None => {
                         self.active = ActiveView::PasswordGen { gen, form };
                     }
+                }
+            }
+            ActiveView::FormVaultPicker { form, vault_state } => {
+                let vaults = self.main_view.vaults_snapshot();
+                let len = vaults.len() + 1; // +1 for "All Vaults"
+                match key {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let cur = vault_state.selected().unwrap_or(0);
+                        vault_state.select(Some((cur + 1).min(len.saturating_sub(1))));
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        let cur = vault_state.selected().unwrap_or(0);
+                        vault_state.select(Some(cur.saturating_sub(1)));
+                    }
+                    KeyCode::Enter => {
+                        // Determine vault_id and vault_name from selection
+                        let placeholder = EntryForm::new_add(None);
+                        let mut form = std::mem::replace(form, placeholder);
+                        let idx = vault_state.selected().unwrap_or(0);
+                        if idx == 0 {
+                            // "All Vaults" selected — use the first vault
+                            if let Some(v) = vaults.first() {
+                                form.set_vault(v.id, v.name.clone());
+                            }
+                        } else if let Some(v) = vaults.get(idx - 1) {
+                            form.set_vault(v.id, v.name.clone());
+                        }
+                        self.active = ActiveView::Form(form);
+                    }
+                    KeyCode::Esc => {
+                        let placeholder = EntryForm::new_add(None);
+                        let form = std::mem::replace(form, placeholder);
+                        self.active = ActiveView::Form(form);
+                    }
+                    KeyCode::Char('a') => {
+                        self.active = ActiveView::VaultForm(VaultForm::new(String::new()));
+                    }
+                    _ => {}
                 }
             }
             _ => {
@@ -347,72 +423,97 @@ impl Tui {
             header_area,
         );
 
-        // Body: always render Cols 1+2; Col 3 depends on active view.
-        let col3 = self.main_view.render_cols_1_2(frame, body_area);
+        // Body: render Cols 1+2 for unlocked views; for locked, clear the body first.
         match &mut self.active {
-            ActiveView::Main => {
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                if self.main_view.is_leader_mode() {
-                    self.main_view.render_leader_overlay(frame, body_area);
+            ActiveView::Locked {
+                passphrase_input,
+                error,
+            } => {
+                // Clear the full body area so vault names don't leak behind the lock screen.
+                frame.render_widget(Clear, body_area);
+                render_lock_screen(frame, body_area, passphrase_input, error.as_deref());
+            }
+            _ => {
+                let col3 = self.main_view.render_cols_1_2(frame, body_area);
+                match &mut self.active {
+                    ActiveView::Main => {
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        if self.main_view.is_leader_mode() {
+                            self.main_view.render_leader_overlay(frame, body_area);
+                        }
+                        if self.main_view.is_vault_picker_open() {
+                            self.main_view.render_vault_picker(frame, body_area);
+                        }
+                    }
+                    ActiveView::Form(f) => {
+                        // Render main view detail pane behind the overlay.
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        // Render form as centered overlay on top.
+                        let overlay = centered_rect(80, 90, body_area);
+                        f.render(frame, overlay);
+                    }
+                    ActiveView::FormVaultPicker { form, vault_state } => {
+                        // Render main view detail pane behind the overlay.
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        // Render form as centered overlay.
+                        let overlay = centered_rect(80, 90, body_area);
+                        form.render(frame, overlay);
+                        // Render vault picker on top.
+                        let vaults = self.main_view.vaults_snapshot();
+                        render_form_vault_picker(frame, body_area, &vaults, vault_state);
+                    }
+                    ActiveView::ConfirmSave { form } => {
+                        let name = form.name().to_string();
+                        // Render main view detail pane behind the overlay.
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        // Render form as centered overlay, then confirm modal on top.
+                        let overlay = centered_rect(80, 90, body_area);
+                        form.render(frame, overlay);
+                        render_confirm_save_modal(frame, body_area, &name);
+                    }
+                    ActiveView::ConfirmDiscard { form } => {
+                        // Render main view detail pane behind the overlay.
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        // Render form as centered overlay, then discard confirm modal on top.
+                        let overlay = centered_rect(80, 90, body_area);
+                        form.render(frame, overlay);
+                        render_confirm_discard_modal(frame, body_area);
+                    }
+                    ActiveView::ConfirmDelete { name, .. } => {
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        render_confirm_delete_modal(frame, body_area, name);
+                    }
+                    ActiveView::PasswordGen { gen, form } => {
+                        // Render main view detail pane behind the overlay.
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        // Render form as centered overlay, then gen popup on top.
+                        let overlay = centered_rect(80, 90, body_area);
+                        form.render(frame, overlay);
+                        gen.render(frame, body_area);
+                    }
+                    ActiveView::VaultForm(f) => {
+                        // Render main view detail pane behind the overlay.
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        // Render vault form as centered overlay.
+                        let overlay = centered_rect(80, 90, body_area);
+                        f.render(frame, overlay);
+                    }
+                    ActiveView::ConfirmDeleteVault { name, .. } => {
+                        self.main_view
+                            .render_detail(frame, col3, self.detail_entry.as_ref());
+                        render_confirm_delete_vault_modal(frame, body_area, name);
+                    }
+                    // Locked is handled above — unreachable here.
+                    ActiveView::Locked { .. } => unreachable!(),
                 }
-                if self.main_view.is_vault_picker_open() {
-                    self.main_view.render_vault_picker(frame, body_area);
-                }
-            }
-            ActiveView::Form(f) => {
-                // Render main view detail pane behind the overlay.
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                // Render form as centered overlay on top.
-                let overlay = centered_rect(80, 90, body_area);
-                f.render(frame, overlay);
-            }
-            ActiveView::ConfirmSave { form } => {
-                let name = form.name().to_string();
-                // Render main view detail pane behind the overlay.
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                // Render form as centered overlay, then confirm modal on top.
-                let overlay = centered_rect(80, 90, body_area);
-                form.render(frame, overlay);
-                render_confirm_save_modal(frame, body_area, &name);
-            }
-            ActiveView::ConfirmDiscard { form } => {
-                // Render main view detail pane behind the overlay.
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                // Render form as centered overlay, then discard confirm modal on top.
-                let overlay = centered_rect(80, 90, body_area);
-                form.render(frame, overlay);
-                render_confirm_discard_modal(frame, body_area);
-            }
-            ActiveView::ConfirmDelete { name, .. } => {
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                render_confirm_delete_modal(frame, body_area, name);
-            }
-            ActiveView::PasswordGen { gen, form } => {
-                // Render main view detail pane behind the overlay.
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                // Render form as centered overlay, then gen popup on top.
-                let overlay = centered_rect(80, 90, body_area);
-                form.render(frame, overlay);
-                gen.render(frame, body_area);
-            }
-            ActiveView::VaultForm(f) => {
-                // Render main view detail pane behind the overlay.
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                // Render vault form as centered overlay.
-                let overlay = centered_rect(80, 90, body_area);
-                f.render(frame, overlay);
-            }
-            ActiveView::ConfirmDeleteVault { name, .. } => {
-                self.main_view
-                    .render_detail(frame, col3, self.detail_entry.as_ref());
-                render_confirm_delete_vault_modal(frame, body_area, name);
             }
         }
 
@@ -421,14 +522,27 @@ impl Tui {
             render_error_modal(frame, body_area, msg);
         }
 
-        // Toast notification (rendered on top of everything in the body)
-        if let Some(ref toast) = self.toast {
-            render_toast(frame, body_area, toast);
-        }
-
-        // Status bar
+        // Status bar — show active status message or context hint
+        let status_text = if let Some((msg, created_at)) = &self.status_message {
+            if created_at.elapsed() < Duration::from_secs(3) {
+                msg.clone()
+            } else {
+                self.status_hint()
+            }
+        } else {
+            self.status_hint()
+        };
+        let status_color = if self.status_message.is_some() {
+            match self.status_message_kind {
+                MessageKind::Success => Color::Green,
+                MessageKind::Error => Color::Red,
+                MessageKind::Info => Color::DarkGray,
+            }
+        } else {
+            Color::DarkGray
+        };
         frame.render_widget(
-            Paragraph::new(self.status_hint()).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(status_text).style(Style::default().fg(status_color)),
             status_area,
         );
     }
@@ -505,6 +619,9 @@ impl Tui {
                 "[g] regenerate  [a] accept  [Esc] cancel  [+/-] length  [u/l/d/s/x] charset"
                     .to_string()
             }
+            ActiveView::FormVaultPicker { .. } => {
+                "[j/k] select  [a] add vault  [Enter] confirm  [Esc] close".to_string()
+            }
             ActiveView::VaultForm(f) => {
                 if f.is_name_focused() {
                     "Editing vault name  ·  [Tab] toggle default  [Enter] create  [Esc] cancel"
@@ -512,6 +629,13 @@ impl Tui {
                 } else {
                     "[Space] toggle default  [Tab] back to name  [Enter] create  [Esc] cancel"
                         .to_string()
+                }
+            }
+            ActiveView::Locked { error, .. } => {
+                if error.is_some() {
+                    "Wrong passphrase. Try again.  [Esc] quit".to_string()
+                } else {
+                    "Enter passphrase to unlock  [Esc] quit".to_string()
                 }
             }
         }
@@ -546,8 +670,15 @@ impl Tui {
                 other => match self.main_view.handle_key(other) {
                     MainViewAction::None => {}
                     MainViewAction::OpenAddForm { vault_id } => {
+                        let vault_name = self
+                            .main_view
+                            .vaults_snapshot()
+                            .iter()
+                            .find(|v| v.id == vault_id)
+                            .map(|v| v.name.clone())
+                            .unwrap_or_default();
                         let mut form = EntryForm::new_add(None);
-                        form.set_vault_id(vault_id);
+                        form.set_vault(vault_id, vault_name);
                         self.active = ActiveView::Form(form);
                     }
                     MainViewAction::OpenEditForm { entry_id } => {
@@ -558,7 +689,16 @@ impl Tui {
                             .find(|e| e.id == entry_id)
                             .cloned();
                         if let Some(e) = entry {
-                            self.active = ActiveView::Form(EntryForm::new_edit(&e));
+                            let mut form = EntryForm::new_edit(&e);
+                            let vault_name = self
+                                .main_view
+                                .vaults_snapshot()
+                                .iter()
+                                .find(|v| v.id == e.vault_id)
+                                .map(|v| v.name.clone())
+                                .unwrap_or_default();
+                            form.set_vault(e.vault_id, vault_name);
+                            self.active = ActiveView::Form(form);
                         }
                     }
                     MainViewAction::DeleteEntry { entry_id } => {
@@ -694,7 +834,17 @@ impl Tui {
             },
             ActiveView::VaultForm(form) => match form.handle_key(key) {
                 VaultFormAction::Confirm(mut vault) => {
-                    vault.recipients = vec![self.app.identity.to_recipient()];
+                    match &self.app.identity {
+                        Some(identity) => {
+                            vault.recipients = vec![identity.to_recipient()];
+                        }
+                        None => {
+                            self.error_message =
+                                Some("Vault is locked. Cannot create vault.".to_string());
+                            self.active = ActiveView::Main;
+                            return self.state.clone();
+                        }
+                    }
                     self.pending = Some(AppAction::SaveVault { vault });
                     self.active = ActiveView::Main;
                 }
@@ -703,8 +853,45 @@ impl Tui {
                 }
                 VaultFormAction::None => {}
             },
+            ActiveView::Locked {
+                passphrase_input,
+                error,
+            } => {
+                match key {
+                    KeyCode::Esc => {
+                        self.state = RunState::Quit;
+                    }
+                    KeyCode::Enter => {
+                        let passphrase =
+                            secrecy::SecretString::from(passphrase_input.text().to_string());
+                        match self.app.unlock(&passphrase) {
+                            Ok(()) => {
+                                // Switch to Main and queue entry reload
+                                self.active = ActiveView::Main;
+                                self.pending = Some(AppAction::ReloadEntries);
+                            }
+                            Err(e) => {
+                                *error = Some(e.to_string());
+                                passphrase_input.set_text("");
+                            }
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        passphrase_input.set_text(format!("{}{}", passphrase_input.text(), c));
+                    }
+                    KeyCode::Backspace => {
+                        let text = passphrase_input.text();
+                        if !text.is_empty() {
+                            passphrase_input.set_text(text[..text.len() - 1].to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
             // These are handled in handle_key_with_modifiers, never reached here.
-            ActiveView::Form(_) | ActiveView::PasswordGen { .. } => {}
+            ActiveView::Form(_)
+            | ActiveView::PasswordGen { .. }
+            | ActiveView::FormVaultPicker { .. } => {}
         }
         self.state.clone()
     }
@@ -715,15 +902,24 @@ impl Tui {
     /// On backend failure the error is stored in `self.error_message` and displayed
     /// as an overlay modal rather than propagating up and crashing the TUI.
     pub async fn flush_pending(&mut self) -> Result<()> {
+        // If locked, skip all pending operations
+        if self.app.is_locked {
+            self.pending = None;
+            self.pending_copy = None;
+            return Ok(());
+        }
+
         // Drain vault mutation (save / delete).
         if let Some(action) = self.pending.take() {
             match self.do_flush(action).await {
                 Ok(Some(ref msg)) => {
-                    self.show_toast(msg, ToastKind::Success);
+                    self.status_message = Some((msg.to_string(), Instant::now()));
+                    self.status_message_kind = MessageKind::Success;
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    self.error_message = Some(e.to_string());
+                    self.status_message = Some((e.to_string(), Instant::now()));
+                    self.status_message_kind = MessageKind::Error;
                 }
             }
         }
@@ -732,10 +928,15 @@ impl Tui {
         if let Some(pc) = self.pending_copy.take() {
             match self.do_copy(pc).await {
                 Ok(()) => {
-                    self.show_toast("Copied to clipboard (30s timeout)", ToastKind::Success);
+                    self.status_message = Some((
+                        "Copied to clipboard (30s timeout)".to_string(),
+                        Instant::now(),
+                    ));
+                    self.status_message_kind = MessageKind::Success;
                 }
                 Err(e) => {
-                    self.error_message = Some(e.to_string());
+                    self.status_message = Some((e.to_string(), Instant::now()));
+                    self.status_message_kind = MessageKind::Error;
                 }
             }
         }
@@ -744,9 +945,13 @@ impl Tui {
     }
 
     /// Inner flush implementation — returns `Ok(Some(msg))` on success with a
-    /// toast message, `Ok(None)` on success without a toast, or `Err` on failure.
+    /// status message, `Ok(None)` on success without a message, or `Err` on failure.
     async fn do_flush(&mut self, action: AppAction) -> Result<Option<String>> {
         let vaults = self.app.registry.list_vaults().await?;
+        let identity = match self.app.identity.as_ref() {
+            Some(id) => id.clone(),
+            None => return Ok(None), // locked — no-op
+        };
 
         match action {
             AppAction::SaveEntry {
@@ -757,10 +962,7 @@ impl Tui {
                 // Find the vault that owns this entry
                 let vault = vaults.iter().find(|v| v.id == entry.vault_id);
                 if let Some(v) = vault {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(v, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(v, identity.clone());
                     match mode {
                         FormMode::Add => svc.add_entry(&entry).await?,
                         FormMode::Edit => svc.update_entry(&entry).await?,
@@ -770,10 +972,7 @@ impl Tui {
                 // Reload and re-select the saved entry
                 let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
                 for vault in &vaults {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(vault, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(vault, identity.clone());
                     let entries = svc.list_entries(vault.id, None).await?;
                     all_entries.extend(entries);
                 }
@@ -789,20 +988,14 @@ impl Tui {
             AppAction::DeleteEntry { entry_id, vault_id } => {
                 let vault = vaults.iter().find(|v| v.id == vault_id);
                 if let Some(v) = vault {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(v, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(v, identity.clone());
                     svc.delete_entry(entry_id).await?;
                 }
 
                 // Reload after delete — reset to index 0
                 let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
                 for vault in &vaults {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(vault, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(vault, identity.clone());
                     let entries = svc.list_entries(vault.id, None).await?;
                     all_entries.extend(entries);
                 }
@@ -814,14 +1007,11 @@ impl Tui {
             AppAction::LoadDetail { entry_id, vault_id } => {
                 let vault = vaults.iter().find(|v| v.id == vault_id);
                 if let Some(v) = vault {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(v, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(v, identity.clone());
                     self.detail_entry = svc.get_entry(entry_id).await?;
                 }
 
-                Ok(None) // No toast for loading detail
+                Ok(None) // No status message for loading detail
             }
             AppAction::SaveVault { vault } => {
                 self.app.registry.add_vault(&vault).await?;
@@ -832,10 +1022,7 @@ impl Tui {
                 let vaults = self.app.registry.list_vaults().await?;
                 let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
                 for v in &vaults {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(v, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(v, identity.clone());
                     let entries = svc.list_entries(v.id, None).await?;
                     all_entries.extend(entries);
                 }
@@ -850,10 +1037,7 @@ impl Tui {
                 let vaults = self.app.registry.list_vaults().await?;
                 let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
                 for v in &vaults {
-                    let svc = self
-                        .app
-                        .registry
-                        .vault_service_for(v, self.app.identity.clone());
+                    let svc = self.app.registry.vault_service_for(v, identity.clone());
                     let entries = svc.list_entries(v.id, None).await?;
                     all_entries.extend(entries);
                 }
@@ -862,6 +1046,24 @@ impl Tui {
                 self.detail_entry = None;
 
                 Ok(Some("Vault deleted".to_string()))
+            }
+            AppAction::ReloadEntries => {
+                // Reload entries after unlock
+                let vaults = self.app.registry.list_vaults().await?;
+                let identity = match self.app.identity.as_ref() {
+                    Some(id) => id.clone(),
+                    None => return Ok(None),
+                };
+                let mut all_entries: Vec<bogita_core::domain::Entry> = Vec::new();
+                for v in &vaults {
+                    let svc = self.app.registry.vault_service_for(v, identity.clone());
+                    let entries = svc.list_entries(v.id, None).await?;
+                    all_entries.extend(entries);
+                }
+                self.main_view.reload_vaults(vaults);
+                self.main_view.reload_entries(all_entries);
+                self.detail_entry = None;
+                Ok(Some("Unlocked".to_string()))
             }
         }
     }
@@ -1132,28 +1334,139 @@ fn render_confirm_discard_modal(frame: &mut Frame, area: Rect) {
     frame.render_widget(hint, rows[1]);
 }
 
-/// Render a transient toast notification centered at the bottom of the body area.
-fn render_toast(frame: &mut Frame, area: Rect, toast: &Toast) {
-    let color = match toast.kind {
-        ToastKind::Success => Color::Green,
-        ToastKind::Info => Color::Cyan,
-        ToastKind::Warning => Color::Yellow,
+/// Render the lock screen: a centered modal with a masked passphrase prompt.
+fn render_lock_screen(
+    frame: &mut Frame,
+    area: Rect,
+    passphrase_input: &TextInputState,
+    error: Option<&str>,
+) {
+    let modal_w = 50u16.min(area.width);
+    let modal_h = 8u16.min(area.height);
+    let x = area.x + area.width.saturating_sub(modal_w) / 2;
+    let y = area.y + area.height.saturating_sub(modal_h) / 2;
+    let modal_area = Rect::new(x, y, modal_w, modal_h);
+
+    frame.render_widget(Clear, modal_area);
+
+    let border_color = if error.is_some() {
+        Color::Red
+    } else {
+        Color::Yellow
     };
-
-    let msg_len = toast.message.len() as u16;
-    let toast_w = (msg_len + 6).min(area.width * 60 / 100);
-    let toast_h = 3u16;
-    let x = area.x + area.width.saturating_sub(toast_w) / 2;
-    let y = area.y + area.height.saturating_sub(toast_h).saturating_sub(2); // 2 rows above bottom
-    let toast_area = Rect::new(x, y, toast_w, toast_h);
-
-    frame.render_widget(Clear, toast_area);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(color))
-        .title(format!(" {} ", toast.message));
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(
+            " Locked ",
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        ));
 
-    frame.render_widget(block, toast_area);
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    // Error text
+    if let Some(err) = error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(err, Style::default().fg(Color::Red))),
+            rows[0],
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "Enter passphrase:",
+                Style::default().fg(Color::White),
+            )),
+            rows[0],
+        );
+    }
+
+    // Masked passphrase input
+    let masked: String = passphrase_input.text().chars().map(|_| '•').collect();
+    let input_widget = Paragraph::new(Span::styled(masked, Style::default().fg(Color::Cyan)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Plain)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+    frame.render_widget(input_widget, rows[1]);
+
+    // Cursor position indicator
+    let cursor_pos = passphrase_input.text().len();
+    let cursor_text = if cursor_pos > 0 {
+        format!("{} chars", cursor_pos)
+    } else {
+        String::new()
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            cursor_text,
+            Style::default().fg(Color::DarkGray),
+        )),
+        rows[2],
+    );
+
+    // Hint line
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "[Enter] unlock  [Esc] quit",
+            Style::default().fg(Color::DarkGray),
+        )),
+        rows[3],
+    );
+}
+
+/// Render a vault picker dropdown overlay on top of the entry form.
+fn render_form_vault_picker(
+    frame: &mut Frame,
+    area: Rect,
+    vaults: &[bogita_core::domain::Vault],
+    state: &mut ListState,
+) {
+    let width = 26u16.min(area.width);
+    let height = (vaults.len() as u16 + 4).min(area.height);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let dropdown = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, dropdown);
+
+    let block = Block::default()
+        .title(" Vault ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(dropdown);
+    frame.render_widget(block, dropdown);
+
+    let mut items: Vec<ListItem> = vec![ListItem::new("All Vaults")];
+    for v in vaults {
+        items.push(ListItem::new(v.name.as_str()));
+    }
+
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    frame.render_stateful_widget(list, inner, state);
 }

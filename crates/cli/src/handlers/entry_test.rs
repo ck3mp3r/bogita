@@ -128,7 +128,7 @@ async fn ls_default_vault_returns_entries() {
     let dir = tempfile::tempdir().unwrap();
     let (registry, identity, _vault) = make_registry_single(&dir.path().join("test.db")).await;
     let cmd = EntryCommands::Ls { vault: None };
-    let output = handle_ls(cmd, registry, identity).await.unwrap();
+    let output = handle_ls(cmd, registry, &identity).await.unwrap();
     assert!(matches!(output, EntryOutput::List(ref v) if v.len() == 1 && v[0].name == "GitHub"));
 }
 
@@ -139,7 +139,7 @@ async fn ls_named_vault_returns_entries() {
     let cmd = EntryCommands::Ls {
         vault: Some("Personal".to_string()),
     };
-    let output = handle_ls(cmd, registry, identity).await.unwrap();
+    let output = handle_ls(cmd, registry, &identity).await.unwrap();
     assert!(matches!(output, EntryOutput::List(ref v) if !v.is_empty()));
 }
 
@@ -150,7 +150,7 @@ async fn ls_unknown_vault_errors() {
     let cmd = EntryCommands::Ls {
         vault: Some("nonexistent".to_string()),
     };
-    let result = handle_ls(cmd, registry, identity).await;
+    let result = handle_ls(cmd, registry, &identity).await;
     assert!(result.is_err());
 }
 
@@ -165,7 +165,7 @@ async fn get_returns_entry_by_name() {
         field: None,
         vault: None,
     };
-    let output = handle_get(cmd, registry, identity).await.unwrap();
+    let output = handle_get(cmd, registry, &identity).await.unwrap();
     if let EntryOutput::Entry(entry) = output {
         assert_eq!(entry.name, "GitHub");
     } else {
@@ -182,7 +182,7 @@ async fn get_unknown_entry_errors() {
         field: None,
         vault: None,
     };
-    let result = handle_get(cmd, registry, identity).await;
+    let result = handle_get(cmd, registry, &identity).await;
     assert!(result.is_err());
 }
 
@@ -195,7 +195,7 @@ async fn get_field_returns_value() {
         field: Some("username".to_string()),
         vault: None,
     };
-    let output = handle_get(cmd, registry, identity).await.unwrap();
+    let output = handle_get(cmd, registry, &identity).await.unwrap();
     if let EntryOutput::Field(val) = output {
         assert_eq!(val, "alice");
     } else {
@@ -212,7 +212,7 @@ async fn get_unknown_field_errors() {
         field: Some("does-not-exist".to_string()),
         vault: None,
     };
-    let result = handle_get(cmd, registry, identity).await;
+    let result = handle_get(cmd, registry, &identity).await;
     assert!(result.is_err());
 }
 
@@ -226,7 +226,7 @@ async fn search_returns_matching_entries() {
         query: "git".to_string(),
         vault: None,
     };
-    let EntryOutput::List(entries) = handle_search(cmd, registry, identity).await.unwrap() else {
+    let EntryOutput::List(entries) = handle_search(cmd, registry, &identity).await.unwrap() else {
         panic!("expected List variant");
     };
     assert_eq!(entries.len(), 2);
@@ -242,7 +242,7 @@ async fn search_no_match_returns_empty() {
         query: "zzz-no-match".to_string(),
         vault: None,
     };
-    let EntryOutput::List(entries) = handle_search(cmd, registry, identity).await.unwrap() else {
+    let EntryOutput::List(entries) = handle_search(cmd, registry, &identity).await.unwrap() else {
         panic!("expected List variant");
     };
     assert!(entries.is_empty());
@@ -256,7 +256,7 @@ async fn search_named_vault() {
         query: "AWS".to_string(),
         vault: Some("Personal".to_string()),
     };
-    let EntryOutput::List(entries) = handle_search(cmd, registry, identity).await.unwrap() else {
+    let EntryOutput::List(entries) = handle_search(cmd, registry, &identity).await.unwrap() else {
         panic!("expected List variant");
     };
     assert_eq!(entries.len(), 1);
@@ -271,6 +271,6 @@ async fn search_unknown_vault_errors() {
         query: "anything".to_string(),
         vault: Some("nonexistent".to_string()),
     };
-    let result = handle_search(cmd, registry, identity).await;
+    let result = handle_search(cmd, registry, &identity).await;
     assert!(result.is_err());
 }
