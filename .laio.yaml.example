@@ -13,15 +13,49 @@ windows:
         flex: 2
         commands:
           - command: ^$env.EDITOR
-      - name: Opencode
+
+      - name: Harness
         flex: 1
         commands:
-          - command: ^opencode
+          - command: ^agent
             args:
-              - --port
+              - a2a
+              - --agent
+              - orchestrator
 
+  - name: agents
+    flex_direction: row
+    panes:
+      - flex: 1
+        commands:
+          - command: ^agent
+            args:
+              - a2a
+              - --agent
+              - reviewer
+              - --name
+              - jack
+      - flex: 1
+        commands:
+          - command: ^agent
+            args:
+              - a2a
+              - --agent
+              - researcher
+              - --name
+              - lucy
+      - flex: 1
+        commands:
+          - command: ^agent
+            args:
+              - a2a
+              - --agent
+              - developer
+              - --name
+              - bob
   - name: misc
     flex_direction: row
     panes:
       - flex: 1
       - flex: 1
+
