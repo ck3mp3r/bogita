@@ -2,10 +2,14 @@ use crate::ports::KeychainStore;
 use crate::storage::keychain::KeychainAdapter;
 use serial_test::serial;
 
-/// Initialize the keyring mock store for testing.
+/// Initialize the keyring-core mock store for testing.
 /// This avoids touching the system keychain.
 fn init_mock_store() {
-    keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+    // The v1 layer installs the platform store as the keyring-core default on
+    // first use, so trigger that one-time init first and then override it with
+    // the in-memory mock.
+    let _ = keyring::Entry::store_status();
+    keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
 }
 
 #[test]

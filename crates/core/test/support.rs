@@ -2,7 +2,7 @@
 //!
 //! Provides [`MockKeychain`], an in-memory implementation of [`KeychainStore`]
 //! that avoids touching the OS keychain. All test code should use this instead
-//! of `keyring::mock`.
+//! of the `keyring-core` mock store.
 //!
 //! Also provides [`seed_vault`], a raw vault-row insert so tests can satisfy
 //! foreign-key constraints without building a full `Vault`.
