@@ -107,3 +107,9 @@ impl<B: ClipboardBackend> ClipboardService<B> {
 pub fn system() -> ClipboardService<ArboardBackend> {
     ClipboardService::new(ArboardBackend)
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/service/clipboard.rs"]
+mod clipboard_test;
+// endregion: --- Tests

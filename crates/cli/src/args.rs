@@ -121,3 +121,9 @@ pub enum AgentCommands {
     /// List keys served by the agent
     Keys,
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../test/args.rs"]
+mod args_test;
+// endregion: --- Tests

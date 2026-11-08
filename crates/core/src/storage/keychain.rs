@@ -75,3 +75,9 @@ impl KeychainStore for KeychainAdapter {
         }
     }
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/storage/keychain.rs"]
+mod keychain_test;
+// endregion: --- Tests

@@ -51,6 +51,8 @@ pub fn decrypt_with_passphrase(encrypted: &[u8], passphrase: &SecretString) -> R
     String::from_utf8(decrypted).map_err(|_| CryptoError::DecryptionFailed.into())
 }
 
+// region:    --- Tests
 #[cfg(test)]
-#[path = "passphrase_test.rs"]
+#[path = "../../test/crypto/passphrase.rs"]
 mod passphrase_test;
+// endregion: --- Tests

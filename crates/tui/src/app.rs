@@ -1470,3 +1470,15 @@ fn render_form_vault_picker(
 
     frame.render_stateful_widget(list, inner, state);
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/app/main_and_navigation.rs"]
+mod app_main_and_navigation_test;
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/app/overlays_and_lock.rs"]
+mod app_overlays_and_lock_test;
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/app/support.rs"]
+mod support;
+// endregion: --- Tests

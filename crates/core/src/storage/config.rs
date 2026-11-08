@@ -111,3 +111,9 @@ impl AppConfig {
         std::fs::rename(&tmp, path).map_err(|e| ConfigError::WriteFailed(e.to_string()).into())
     }
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/storage/config.rs"]
+mod config_test;
+// endregion: --- Tests

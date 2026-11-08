@@ -109,3 +109,9 @@ fn build_charset(opts: &CharsetOptions) -> Vec<char> {
 
     chars
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/service/password_gen.rs"]
+mod password_gen_test;
+// endregion: --- Tests

@@ -156,12 +156,6 @@ impl MainView {
         self.vault_picker_open
     }
 
-    /// The currently selected vault index (0 = "All Vaults").
-    #[cfg(test)]
-    pub fn vault_state_selected(&self) -> Option<usize> {
-        self.vault_state.selected()
-    }
-
     /// Whether the search bar is currently accepting input.
     pub fn is_searching(&self) -> bool {
         self.searching
@@ -840,3 +834,18 @@ impl MainView {
         }
     }
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/views/main_view/entries_navigation.rs"]
+mod main_view_entries_navigation_test;
+#[cfg(test)]
+#[path = "../../test/views/main_view/reveal_actions.rs"]
+mod main_view_reveal_actions_test;
+#[cfg(test)]
+#[path = "../../test/views/main_view/search_leader_picker.rs"]
+mod main_view_search_leader_picker_test;
+#[cfg(test)]
+#[path = "../../test/views/main_view/support.rs"]
+mod support;
+// endregion: --- Tests

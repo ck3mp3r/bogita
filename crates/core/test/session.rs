@@ -1,6 +1,6 @@
 use crate::domain::AgeIdentity;
 use crate::session::Session;
-use crate::test_helpers::MockKeychain;
+use crate::test_support::MockKeychain;
 
 #[test]
 fn store_identity_stores_in_keychain() {

@@ -12,6 +12,7 @@ homepage.workspace = true
 default = ["sqlite", "git"]
 sqlite = ["dep:sqlx"]
 git = ["dep:git2"]
+integration = []
 
 [dependencies]
 age = { version = "0.12", default-features = false }

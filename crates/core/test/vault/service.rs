@@ -19,12 +19,19 @@ fn create_test_keys() -> (Vec<crate::domain::AgeRecipient>, AgeIdentity) {
     (vec![recipient], identity)
 }
 
-async fn create_service() -> VaultService<SqliteStorage<AgeCrypto>, AgeCrypto> {
+async fn create_service() -> (VaultService<SqliteStorage<AgeCrypto>, AgeCrypto>, Uuid) {
     let storage = SqliteStorage::new(":memory:", AgeCrypto)
         .await
         .expect("storage init failed");
+    let vault_id = Uuid::new_v4();
+    crate::test_support::seed_vault(&storage, vault_id)
+        .await
+        .expect("seed failed");
     let (recipients, identity) = create_test_keys();
-    VaultService::new(storage, AgeCrypto, recipients, identity)
+    (
+        VaultService::new(storage, AgeCrypto, recipients, identity),
+        vault_id,
+    )
 }
 
 fn make_entry(vault_id: Uuid, name: &str) -> Entry {
@@ -58,12 +65,7 @@ fn make_entry(vault_id: Uuid, name: &str) -> Entry {
 
 #[tokio::test]
 async fn test_add_and_get_entry() {
-    let service = create_service().await;
-    let vault_id = Uuid::new_v4();
-    service
-        .seed_vault_for_test(vault_id)
-        .await
-        .expect("seed failed");
+    let (service, vault_id) = create_service().await;
 
     let entry = make_entry(vault_id, "GitHub");
     service.add_entry(&entry).await.expect("add_entry failed");
@@ -89,7 +91,7 @@ async fn test_add_and_get_entry() {
 
 #[tokio::test]
 async fn test_get_nonexistent_returns_none() {
-    let service = create_service().await;
+    let (service, _vault_id) = create_service().await;
 
     let result = service
         .get_entry(Uuid::new_v4())
@@ -101,12 +103,7 @@ async fn test_get_nonexistent_returns_none() {
 
 #[tokio::test]
 async fn test_list_all_entries() {
-    let service = create_service().await;
-    let vault_id = Uuid::new_v4();
-    service
-        .seed_vault_for_test(vault_id)
-        .await
-        .expect("seed failed");
+    let (service, vault_id) = create_service().await;
 
     service
         .add_entry(&make_entry(vault_id, "GitHub"))
@@ -127,12 +124,7 @@ async fn test_list_all_entries() {
 
 #[tokio::test]
 async fn test_list_entries_with_search() {
-    let service = create_service().await;
-    let vault_id = Uuid::new_v4();
-    service
-        .seed_vault_for_test(vault_id)
-        .await
-        .expect("seed failed");
+    let (service, vault_id) = create_service().await;
 
     service
         .add_entry(&make_entry(vault_id, "GitHub"))
@@ -159,12 +151,7 @@ async fn test_list_entries_with_search() {
 
 #[tokio::test]
 async fn test_update_entry() {
-    let service = create_service().await;
-    let vault_id = Uuid::new_v4();
-    service
-        .seed_vault_for_test(vault_id)
-        .await
-        .expect("seed failed");
+    let (service, vault_id) = create_service().await;
 
     let entry = make_entry(vault_id, "GitHub");
     service.add_entry(&entry).await.expect("add failed");
@@ -203,12 +190,7 @@ async fn test_update_entry() {
 
 #[tokio::test]
 async fn test_delete_entry() {
-    let service = create_service().await;
-    let vault_id = Uuid::new_v4();
-    service
-        .seed_vault_for_test(vault_id)
-        .await
-        .expect("seed failed");
+    let (service, vault_id) = create_service().await;
 
     let entry = make_entry(vault_id, "To Delete");
     service.add_entry(&entry).await.expect("add failed");

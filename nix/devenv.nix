@@ -30,7 +30,9 @@
     echo "Helper commands:"
     echo "  check      - Run cargo check"
     echo "  fmt        - Run cargo fmt"
-    echo "  tests      - Run cargo test"
+    echo "  tests      - Run unit tests (cargo nextest)"
+    echo "  tests-all  - Run unit + integration tests"
+    echo "  tests-integration - Run integration tests with retries"
     echo "  clippy     - Run cargo clippy (strict)"
     echo "  coverage   - Generate code coverage report"
     echo "  build      - Build release binary"
@@ -45,7 +47,9 @@
   helpers = [
     (pkgs.writeShellScriptBin "check" ''exec cargo check "$@"'')
     (pkgs.writeShellScriptBin "fmt" ''exec cargo fmt "$@"'')
-    (pkgs.writeShellScriptBin "tests" ''exec cargo test "$@"'')
+    (pkgs.writeShellScriptBin "tests" ''exec cargo nextest run "$@"'')
+    (pkgs.writeShellScriptBin "tests-all" ''exec cargo nextest run --features integration "$@"'')
+    (pkgs.writeShellScriptBin "tests-integration" ''exec cargo nextest run --features integration --profile integration "$@"'')
     (pkgs.writeShellScriptBin "clippy" ''exec cargo clippy --all-targets --all-features -- -D warnings "$@"'')
     (pkgs.writeShellScriptBin "coverage" ''exec cargo llvm-cov --html --open "$@"'')
     (pkgs.writeShellScriptBin "build" ''exec cargo build --release "$@"'')
@@ -67,6 +71,7 @@ in
         pkgs.sqlx-cli # Database migrations
         pkgs.cargo-tarpaulin # Code coverage (alternative)
         cargoLlvmCov # Code coverage (primary)
+        pkgs.cargo-nextest # Test runner (unit + integration profiles)
 
         # Security tools
         pkgs.age # Encryption

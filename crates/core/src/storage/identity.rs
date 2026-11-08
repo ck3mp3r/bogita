@@ -97,3 +97,9 @@ pub fn read_identity_encrypted(path: &Path, passphrase: &SecretString) -> Result
     AgeIdentity::from_str(plaintext.trim())
         .map_err(|e| crate::error::CryptoError::InvalidIdentity(e).into())
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/storage/identity.rs"]
+mod identity_test;
+// endregion: --- Tests

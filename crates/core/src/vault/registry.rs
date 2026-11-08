@@ -79,3 +79,9 @@ where
         )
     }
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/vault/registry.rs"]
+mod registry_test;
+// endregion: --- Tests

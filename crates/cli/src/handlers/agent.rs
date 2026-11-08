@@ -50,3 +50,9 @@ pub async fn handle_agent(cmd: AgentCommands) -> Result<AgentOutput> {
         }
     }
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/handlers/agent.rs"]
+mod agent_test;
+// endregion: --- Tests

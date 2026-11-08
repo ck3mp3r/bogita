@@ -5,7 +5,7 @@ use crate::session::Session;
 use crate::storage::config::AppConfig;
 use crate::storage::identity::write_identity_encrypted;
 use crate::storage::sqlite::SqliteStorage;
-use crate::test_helpers::MockKeychain;
+use crate::test_support::MockKeychain;
 use crate::vault::registry::VaultRegistry;
 use chrono::Utc;
 use secrecy::SecretString;
@@ -161,7 +161,7 @@ async fn lock_and_unlock_round_trip() {
     use crate::session::Session;
     use crate::storage::identity::write_identity_encrypted;
     use crate::storage::sqlite::SqliteStorage;
-    use crate::test_helpers::MockKeychain;
+    use crate::test_support::MockKeychain;
     use crate::vault::registry::VaultRegistry;
 
     let dir = TempDir::new().unwrap();

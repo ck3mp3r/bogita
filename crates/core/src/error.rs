@@ -129,3 +129,9 @@ pub enum SessionError {
     #[error("keychain unavailable: {0}")]
     KeychainUnavailable(String),
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../test/error.rs"]
+mod error_test;
+// endregion: --- Tests

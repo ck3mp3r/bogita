@@ -61,3 +61,9 @@ where
         }
     }
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/handlers/vault.rs"]
+mod vault_test;
+// endregion: --- Tests

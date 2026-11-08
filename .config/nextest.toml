@@ -1,0 +1,7 @@
+[profile.default]
+
+[profile.integration]
+retries = 1
+
+[profile.ci.junit]
+path = "junit.xml"

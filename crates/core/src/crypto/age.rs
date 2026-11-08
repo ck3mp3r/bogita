@@ -74,6 +74,8 @@ impl Crypto for AgeCrypto {
     }
 }
 
+// region:    --- Tests
 #[cfg(test)]
-#[path = "age_test.rs"]
+#[path = "../../test/crypto/age.rs"]
 mod age_test;
+// endregion: --- Tests

@@ -184,3 +184,9 @@ fn field_value_to_string(value: &FieldValue) -> String {
         FieldValue::Date(ts) => ts.to_string(),
     }
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/handlers/entry.rs"]
+mod entry_test;
+// endregion: --- Tests

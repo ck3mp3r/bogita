@@ -1638,3 +1638,21 @@ impl HandleEvent<Event, Regular, Outcome> for EntryForm {
         self.handle_event_inner(event)
     }
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/views/entry_form/editing.rs"]
+mod entry_form_editing_test;
+#[cfg(test)]
+#[path = "../../test/views/entry_form/mapping_and_labels.rs"]
+mod entry_form_mapping_and_labels_test;
+#[cfg(test)]
+#[path = "../../test/views/entry_form/notes_scroll_validation.rs"]
+mod entry_form_notes_scroll_validation_test;
+#[cfg(test)]
+#[path = "../../test/views/entry_form/reveal_and_types.rs"]
+mod entry_form_reveal_and_types_test;
+#[cfg(test)]
+#[path = "../../test/views/entry_form/support.rs"]
+mod support;
+// endregion: --- Tests

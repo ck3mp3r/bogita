@@ -117,3 +117,9 @@ fn note_fields() -> Vec<Field> {
         idx: 0,
     }]
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/domain/preset.rs"]
+mod preset_test;
+// endregion: --- Tests

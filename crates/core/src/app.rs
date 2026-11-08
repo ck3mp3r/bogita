@@ -288,10 +288,14 @@ impl App<KeychainAdapter> {
     /// Bootstrap the application with the real OS keychain.
     ///
     /// Convenience wrapper around [`App::init_with_keychain`] for production use.
-    /// Tests should call [`App::init_with_keychain`] with a [`MockKeychain`].
-    ///
-    /// [`MockKeychain`]: crate::test_helpers::MockKeychain
+    /// Tests call [`App::init_with_keychain`] with a mock keychain.
     pub async fn init() -> InitResult<KeychainAdapter> {
         Self::init_with_keychain(KeychainAdapter::new()).await
     }
 }
+
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/app.rs"]
+mod app_test;
+// endregion: --- Tests

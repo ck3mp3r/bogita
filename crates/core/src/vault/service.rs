@@ -60,13 +60,8 @@ where
     }
 }
 
-// Test helper — delegates to storage's seed method
-#[cfg(test)]
-impl<C> VaultService<crate::storage::sqlite::SqliteStorage<C>, C>
-where
-    C: Crypto + Send + Sync,
-{
-    pub async fn seed_vault_for_test(&self, vault_id: Uuid) -> Result<()> {
-        self.storage.seed_vault_for_test(vault_id).await
-    }
-}
+// region:    --- Tests
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/vault/service.rs"]
+mod service_test;
+// endregion: --- Tests

@@ -181,3 +181,9 @@ fn hex_nibble(b: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/service/otp.rs"]
+mod otp_test;
+// endregion: --- Tests

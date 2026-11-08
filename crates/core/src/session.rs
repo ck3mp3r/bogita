@@ -38,6 +38,8 @@ impl<K: KeychainStore> Session<K> {
     }
 }
 
+// region:    --- Tests
 #[cfg(test)]
-#[path = "session_test.rs"]
+#[path = "../test/session.rs"]
 mod session_test;
+// endregion: --- Tests

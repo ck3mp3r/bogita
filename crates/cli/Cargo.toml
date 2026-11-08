@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+integration = []
+
 [dependencies]
 bogita-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }

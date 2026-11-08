@@ -252,3 +252,9 @@ fn toggle_span(label: &'static str, enabled: bool) -> Span<'static> {
         Span::styled(label, Style::default().fg(Color::DarkGray))
     }
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/views/password_gen_view.rs"]
+mod password_gen_view_test;
+// endregion: --- Tests

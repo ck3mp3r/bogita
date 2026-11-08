@@ -28,8 +28,7 @@ fn create_test_keys() -> (Vec<AgeRecipient>, AgeIdentity) {
 
 /// Insert a minimal vault row so FK constraints pass during tests
 async fn seed_vault(storage: &SqliteStorage<AgeCrypto>, vault_id: Uuid) {
-    storage
-        .seed_vault_for_test(vault_id)
+    crate::test_support::seed_vault(storage, vault_id)
         .await
         .expect("Failed to seed vault");
 }
