@@ -51,6 +51,8 @@ pub struct GitConfig {
     // Note: Git always uses age encryption (untrusted storage)
 }
 
+/// Kept parallel to `GitConfig` by design; converge when the git sync adapter
+/// lands (audit R12).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AwsConfig {
     /// AWS region (e.g., "us-east-1")
@@ -69,6 +71,8 @@ pub struct AwsConfig {
     pub double_encrypt: bool,
 }
 
+/// Kept parallel to `GitConfig` by design; converge when the git sync adapter
+/// lands (audit R12).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GcpConfig {
     /// GCP project ID

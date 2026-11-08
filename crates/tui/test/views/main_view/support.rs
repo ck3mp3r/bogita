@@ -1,67 +1,23 @@
 use crate::views::main_view::MainView;
-use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue, Vault};
-use chrono::Utc;
+use bogita_core::domain::{Entry, EntryType};
+use bogita_core::test_support::{test_entry, test_otp_entry, test_password_entry};
 use uuid::Uuid;
 
-pub(super) fn make_vault(name: &str) -> Vault {
-    Vault {
-        id: Uuid::new_v4(),
-        name: name.to_string(),
-        is_default: false,
-        created_at: Utc::now().timestamp(),
-        sync_target: None,
-        recipients: vec![],
-        lock_timeout: None,
-        auto_sync: false,
-    }
-}
+pub(super) use bogita_core::test_support::test_vault as make_vault;
 
 pub(super) fn make_entry(name: &str, vault_id: Uuid, entry_type: EntryType) -> Entry {
-    Entry {
-        id: Uuid::new_v4(),
-        vault_id,
-        name: name.to_string(),
-        entry_type,
-        created_at: Utc::now().timestamp(),
-        modified_at: Utc::now().timestamp(),
-        fields: vec![],
+    match entry_type {
+        EntryType::Otp => test_otp_entry(vault_id, name),
+        _ => test_entry(vault_id, name, vec![]),
     }
 }
 
 pub(super) fn make_password_entry(name: &str, vault_id: Uuid) -> Entry {
-    let mut e = make_entry(name, vault_id, EntryType::Token);
-    e.fields = vec![
-        Field {
-            id: Uuid::new_v4(),
-            key: "username".into(),
-            value: FieldValue::Text("alice".into()),
-            field_type: FieldType::Username,
-            encrypted: false,
-            idx: 0,
-        },
-        Field {
-            id: Uuid::new_v4(),
-            key: "password".into(),
-            value: FieldValue::Hidden("s3cr3t".into()),
-            field_type: FieldType::Token,
-            encrypted: true,
-            idx: 1,
-        },
-    ];
-    e
+    test_password_entry(vault_id, name)
 }
 
 pub(super) fn make_otp_entry(name: &str, vault_id: Uuid) -> Entry {
-    let mut e = make_entry(name, vault_id, EntryType::Otp);
-    e.fields = vec![Field {
-        id: Uuid::new_v4(),
-        key: "secret".into(),
-        value: FieldValue::Hidden("JBSWY3DPEHPK3PXP".into()),
-        field_type: FieldType::TotpSecret,
-        encrypted: true,
-        idx: 0,
-    }];
-    e
+    test_otp_entry(vault_id, name)
 }
 
 pub(super) fn make_view_with_vaults() -> MainView {

@@ -12,7 +12,7 @@ pub use domain::*;
 pub use error::*;
 
 // region:    --- Tests
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[path = "../test/support.rs"]
-mod test_support;
+pub mod test_support;
 // endregion: --- Tests

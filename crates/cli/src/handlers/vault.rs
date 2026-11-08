@@ -1,65 +1,36 @@
 //! Vault CLI command handlers.
 
-use crate::args::VaultCommands;
 use bogita_core::domain::Vault;
-use bogita_core::error::{DbError, Error, Result};
-use bogita_core::ports::{Crypto, Storage};
+use bogita_core::error::Result;
+use bogita_core::ports::VaultStore;
 use bogita_core::vault::registry::VaultRegistry;
 
-pub enum VaultOutput {
-    List(Vec<Vault>),
-    Ok,
+use super::resolve_vault;
+
+/// `bogita vault list`
+pub async fn handle_list<S>(registry: VaultRegistry<S>) -> Result<Vec<Vault>>
+where
+    S: VaultStore,
+{
+    registry.list_vaults().await
 }
 
-pub async fn handle_vault<S, C>(
-    cmd: VaultCommands,
-    registry: VaultRegistry<S, C>,
-) -> Result<VaultOutput>
+/// `bogita vault default <name>`
+pub async fn handle_default<S>(name: &str, registry: VaultRegistry<S>) -> Result<()>
 where
-    S: Storage,
-    C: Crypto + Clone,
+    S: VaultStore,
 {
-    match cmd {
-        VaultCommands::List => {
-            let vaults = registry.list_vaults().await?;
-            Ok(VaultOutput::List(vaults))
-        }
-        VaultCommands::Lock => {
-            // Lock/unlock is session-state — stub until TUI session layer (Phase 5)
-            Ok(VaultOutput::Ok)
-        }
-        VaultCommands::Unlock => Ok(VaultOutput::Ok),
-        VaultCommands::Sync { name } => {
-            let _ = name;
-            // Git sync stub — backend not yet implemented
-            Ok(VaultOutput::Ok)
-        }
-        VaultCommands::Default { name } => {
-            let vaults = registry.list_vaults().await?;
-            match vaults.iter().find(|v| v.name == name) {
-                Some(vault) => {
-                    registry.set_default(vault.id).await?;
-                    Ok(VaultOutput::Ok)
-                }
-                None => Err(Error::Database(DbError::Query(format!(
-                    "vault '{name}' not found"
-                )))),
-            }
-        }
-        VaultCommands::Add { .. } => unreachable!("vault add is handled as TUI mutation"),
-        VaultCommands::Rm { name } => {
-            let vaults = registry.list_vaults().await?;
-            match vaults.iter().find(|v| v.name == name) {
-                Some(vault) => {
-                    registry.remove_vault(vault.id).await?;
-                    Ok(VaultOutput::Ok)
-                }
-                None => Err(Error::Database(DbError::Query(format!(
-                    "vault '{name}' not found"
-                )))),
-            }
-        }
-    }
+    let vault = resolve_vault(&Some(name.to_string()), &registry).await?;
+    registry.set_default(vault.id).await
+}
+
+/// `bogita vault rm <name>`
+pub async fn handle_rm<S>(name: &str, registry: VaultRegistry<S>) -> Result<()>
+where
+    S: VaultStore,
+{
+    let vault = resolve_vault(&Some(name.to_string()), &registry).await?;
+    registry.remove_vault(vault.id).await
 }
 
 // region:    --- Tests

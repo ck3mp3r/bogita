@@ -16,6 +16,7 @@ bogita-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
+bogita-core = { path = "../core", features = ["test-support"] }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
 chrono = "0.4"

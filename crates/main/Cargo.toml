@@ -15,9 +15,8 @@ name = "bogita"
 path = "src/main.rs"
 
 [features]
-default = ["sqlite", "git"]
+default = ["sqlite"]
 sqlite = ["bogita-core/sqlite"]
-git = ["bogita-core/git"]
 
 [dependencies]
 bogita-core = { path = "../core" }

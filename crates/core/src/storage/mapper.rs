@@ -17,6 +17,10 @@ pub(crate) fn row_to_vault(row: sqlx::sqlite::SqliteRow) -> Result<Vault> {
     let auto_sync: bool = row.get("auto_sync");
 
     let id = uuid::Uuid::parse_str(&id).map_err(|_| DbError::CorruptedData)?;
+    // Reader contract: writers emit "git", "aws", "gcp" or "none"
+    // (see SqliteStorage::save_vault). The schema CHECK in migrations 001/002
+    // also permits "sqlite" and "", so those stay tolerated here for rows
+    // written by older builds — do not treat them as dead arms.
     let sync_target: Option<SyncTarget> = match backend_type.as_str() {
         "none" | "" | "sqlite" => None,
         _ => Some(

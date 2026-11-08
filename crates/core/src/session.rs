@@ -17,10 +17,6 @@ impl<K: KeychainStore> Session<K> {
         self.keychain.delete_identity()
     }
 
-    pub fn is_locked(&self) -> Result<bool> {
-        Ok(self.keychain.get_identity()?.is_none())
-    }
-
     pub fn store_identity(&self, identity: &AgeIdentity) -> Result<()> {
         let secret = identity.to_secret_string();
         self.keychain.store_identity(secret.expose_secret())

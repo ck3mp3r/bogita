@@ -6,8 +6,8 @@
 //! ## Design
 //! - `ClipboardBackend` is a small trait so that tests can inject a fake
 //!   in-process clipboard without requiring a real display server.
-//! - `ClipboardService<B>` holds the backend and exposes [`copy`],
-//!   [`clear`], and [`copy_with_timeout`].
+//! - `ClipboardService<B>` holds the backend and exposes [`ClipboardService::copy`],
+//!   [`ClipboardService::clear`], and [`ClipboardService::copy_with_timeout`].
 //! - `copy_with_timeout` moves a clone of the backend into a `tokio::spawn`
 //!   task that sleeps for `timeout_secs` seconds, then calls `clear`.
 //!   The `SecretString` is zeroized when it goes out of scope (via `secrecy`).
@@ -102,6 +102,9 @@ impl<B: ClipboardBackend> ClipboardService<B> {
 }
 
 // ── convenience constructor for the real backend ──────────────────────────────
+
+/// Time a copied secret stays on the clipboard before it is cleared.
+pub const CLIPBOARD_TIMEOUT_SECS: u64 = 30;
 
 /// Create a `ClipboardService` backed by the real system clipboard.
 pub fn system() -> ClipboardService<ArboardBackend> {

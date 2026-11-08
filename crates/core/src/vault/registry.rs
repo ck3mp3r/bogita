@@ -1,33 +1,35 @@
 //! VaultRegistry — manages multiple vaults, constructs VaultService per vault.
+//!
+//! The pass-through methods (`add_vault`, `list_vaults`, `default_vault`,
+//! `remove_vault`) are intentional facade surface: callers depend on the
+//! registry, not on the storage adapter. Only `set_default` and
+//! `vault_service_for` add behaviour (audit L2).
 
 use crate::domain::{AgeIdentity, Vault};
 use crate::error::Result;
-use crate::ports::{Crypto, EntryStore, VaultStore};
+use crate::ports::{EntryStore, VaultStore};
 use crate::vault::service::VaultService;
 use uuid::Uuid;
 
 /// Registry that manages vault metadata and constructs a `VaultService` per vault.
 ///
-/// The registry owns the shared storage and crypto adapters. A `VaultService` is
+/// The registry owns the shared storage adapter. A `VaultService` is
 /// constructed on demand for a specific vault, bound to that vault's recipients
 /// and the caller's identity.
 #[derive(Clone)]
-pub struct VaultRegistry<S, C>
+pub struct VaultRegistry<S>
 where
     S: VaultStore,
-    C: Crypto,
 {
     storage: S,
-    crypto: C,
 }
 
-impl<S, C> VaultRegistry<S, C>
+impl<S> VaultRegistry<S>
 where
     S: VaultStore,
-    C: Crypto + Clone,
 {
-    pub fn new(storage: S, crypto: C) -> Self {
-        Self { storage, crypto }
+    pub fn new(storage: S) -> Self {
+        Self { storage }
     }
 
     /// Persist a new vault (or update existing).
@@ -65,18 +67,13 @@ where
     /// Construct a `VaultService` scoped to the given vault and identity.
     ///
     /// The service uses the vault's recipients for encryption and the supplied
-    /// identity for decryption. The registry's storage and crypto are borrowed
-    /// by reference so no cloning of heavy state is required.
-    pub fn vault_service_for(&self, vault: &Vault, identity: AgeIdentity) -> VaultService<&S, C>
+    /// identity for decryption. The registry's storage is borrowed by reference
+    /// so no cloning of heavy state is required.
+    pub fn vault_service_for(&self, vault: &Vault, identity: AgeIdentity) -> VaultService<&S>
     where
         S: VaultStore + EntryStore,
     {
-        VaultService::new(
-            &self.storage,
-            self.crypto.clone(),
-            vault.recipients.clone(),
-            identity,
-        )
+        VaultService::new(&self.storage, vault.recipients.clone(), identity)
     }
 }
 

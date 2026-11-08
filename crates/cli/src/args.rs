@@ -122,6 +122,38 @@ pub enum AgentCommands {
     Keys,
 }
 
+/// Commands that run against an initialised app instead of the TUI.
+///
+/// The binary builds these from [`Commands`] in its dispatcher, so every value
+/// reaching a handler is known to be valid — no defensive guard is needed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliCommand {
+    EntryLs {
+        vault: Option<String>,
+    },
+    EntryGet {
+        name: String,
+        field: Option<String>,
+        vault: Option<String>,
+    },
+    EntrySearch {
+        query: String,
+        vault: Option<String>,
+    },
+    EntryCp {
+        name: String,
+        field: String,
+        vault: Option<String>,
+    },
+    VaultList,
+    VaultDefault {
+        name: String,
+    },
+    VaultRm {
+        name: String,
+    },
+}
+
 // region:    --- Tests
 #[cfg(test)]
 #[path = "../test/args.rs"]

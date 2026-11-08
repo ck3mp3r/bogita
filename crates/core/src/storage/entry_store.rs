@@ -57,26 +57,7 @@ where
         for field in &entry.fields {
             let value_str = self.encrypt_field_value(&field.value, field.encrypted, recipients)?;
 
-            let field_type_str = match &field.field_type {
-                FieldType::Username => "username".to_string(),
-                FieldType::Token => "token".to_string(),
-                FieldType::Url => "url".to_string(),
-                FieldType::Notes => "notes".to_string(),
-                FieldType::Tags => "tags".to_string(),
-                FieldType::Favorite => "favorite".to_string(),
-                FieldType::TotpSecret => "totp_secret".to_string(),
-                FieldType::TotpAlgorithm => "totp_algorithm".to_string(),
-                FieldType::TotpDigits => "totp_digits".to_string(),
-                FieldType::TotpPeriod => "totp_period".to_string(),
-                FieldType::TotpIssuer => "totp_issuer".to_string(),
-                FieldType::TotpAccount => "totp_account".to_string(),
-                FieldType::SshPrivateKey => "ssh_private_key".to_string(),
-                FieldType::SshPublicKey => "ssh_public_key".to_string(),
-                FieldType::SshKeyType => "ssh_key_type".to_string(),
-                FieldType::SshComment => "ssh_comment".to_string(),
-                FieldType::PasswordHistory => "password_history".to_string(),
-                FieldType::Custom(name) => format!("custom:{}", name),
-            };
+            let field_type_str = field.field_type.to_storage();
 
             sqlx::query(
                 r#"
@@ -148,30 +129,7 @@ where
             let value = self.decrypt_field_value(&value_str, encrypted, identity)?;
 
             // Parse field_type from string
-            let field_type = if field_type_str.starts_with("custom:") {
-                FieldType::Custom(field_type_str.strip_prefix("custom:").unwrap().to_string())
-            } else {
-                match field_type_str.as_str() {
-                    "username" => FieldType::Username,
-                    "token" => FieldType::Token,
-                    "url" => FieldType::Url,
-                    "notes" => FieldType::Notes,
-                    "tags" => FieldType::Tags,
-                    "favorite" => FieldType::Favorite,
-                    "totp_secret" => FieldType::TotpSecret,
-                    "totp_algorithm" => FieldType::TotpAlgorithm,
-                    "totp_digits" => FieldType::TotpDigits,
-                    "totp_period" => FieldType::TotpPeriod,
-                    "totp_issuer" => FieldType::TotpIssuer,
-                    "totp_account" => FieldType::TotpAccount,
-                    "ssh_private_key" => FieldType::SshPrivateKey,
-                    "ssh_public_key" => FieldType::SshPublicKey,
-                    "ssh_key_type" => FieldType::SshKeyType,
-                    "ssh_comment" => FieldType::SshComment,
-                    "password_history" => FieldType::PasswordHistory,
-                    other => FieldType::Custom(other.to_string()),
-                }
-            };
+            let field_type = FieldType::from_storage(&field_type_str);
 
             fields.push(Field {
                 id: uuid::Uuid::parse_str(&field_id).map_err(|_| DbError::CorruptedData)?,

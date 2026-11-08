@@ -23,5 +23,6 @@ uuid = { version = "1.24", features = ["v4", "serde"] }
 secrecy = { version = "0.10", features = ["serde"] }
 
 [dev-dependencies]
+bogita-core = { path = "../core", features = ["test-support"] }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros"] }
 tempfile = "3"

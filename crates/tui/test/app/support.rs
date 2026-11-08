@@ -1,108 +1,76 @@
-use bogita_core::ports::KeychainStore;
-use std::sync::Mutex;
+use bogita_core::app::App;
+use bogita_core::crypto::AgeCrypto;
+use bogita_core::domain::{AgeIdentity, FieldType, FieldValue};
+use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
+use bogita_core::session::Session;
+use bogita_core::storage::config::AppConfig;
+use bogita_core::storage::sqlite::SqliteStorage;
+use bogita_core::test_support::{test_entry, test_field, test_vault_with, MockKeychain};
+use bogita_core::vault::registry::VaultRegistry;
+use uuid::Uuid;
 
-pub(super) struct MockKeychain {
-    inner: Mutex<Option<String>>,
-}
-
-impl MockKeychain {
-    fn new() -> Self {
-        Self {
-            inner: Mutex::new(None),
-        }
-    }
-}
-
-impl KeychainStore for MockKeychain {
-    fn store_identity(&self, secret_key: &str) -> bogita_core::error::Result<()> {
-        *self.inner.lock().expect("mock keychain mutex poisoned") = Some(secret_key.to_string());
-        Ok(())
-    }
-
-    fn get_identity(&self) -> bogita_core::error::Result<Option<String>> {
-        Ok(self
-            .inner
-            .lock()
-            .expect("mock keychain mutex poisoned")
-            .clone())
-    }
-
-    fn delete_identity(&self) -> bogita_core::error::Result<()> {
-        *self.inner.lock().expect("mock keychain mutex poisoned") = None;
-        Ok(())
-    }
-}
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+type TestApp = App<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>;
 
 /// Build a minimal App for testing without touching the filesystem.
 ///
 /// If `with_entry` is true, seeds the Personal vault with one entry.
-pub(super) async fn make_app() -> bogita_core::app::App<MockKeychain> {
-    use bogita_core::crypto::AgeCrypto;
-    use bogita_core::domain::{AgeIdentity, Vault};
-    use bogita_core::session::Session;
-    use bogita_core::storage::sqlite::SqliteStorage;
-    use bogita_core::vault::registry::VaultRegistry;
-    use chrono::Utc;
-    use uuid::Uuid;
-
-    let dir = tempfile::tempdir().unwrap();
+pub(super) async fn make_app() -> Result<TestApp> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
     let db_path = dir.path().join("tui_test.db");
     let identity = AgeIdentity::generate();
-    let storage = SqliteStorage::new(&db_path, AgeCrypto).await.unwrap();
-    let registry = VaultRegistry::new(storage, AgeCrypto);
-    let vault = Vault {
-        id: Uuid::new_v4(),
-        name: "Personal".to_string(),
-        is_default: true,
-        created_at: Utc::now().timestamp(),
-        sync_target: None,
-        recipients: vec![identity.to_recipient()],
-        lock_timeout: None,
-        auto_sync: false,
-    };
-    registry.add_vault(&vault).await.unwrap();
+    let storage = SqliteStorage::new(&db_path, AgeCrypto).await?;
+    let registry = VaultRegistry::new(storage);
+    let vault = test_vault_with(
+        Uuid::new_v4(),
+        "Personal",
+        true,
+        vec![identity.to_recipient()],
+    );
+    registry.add_vault(&vault).await?;
 
     // Leak the tempdir so the DB file lives for the duration of the test.
     std::mem::forget(dir);
 
-    bogita_core::app::App {
-        config: bogita_core::storage::config::AppConfig::default(),
+    Ok(App {
+        config: AppConfig::default(),
         identity: Some(identity),
         registry,
         session: Session::new(MockKeychain::new()),
         is_locked: false,
         lock_timeout: None,
-    }
+        identity_store: EncryptedIdentityFile,
+    })
 }
 
 /// Build an App seeded with one entry in the Personal vault.
-pub(super) async fn make_app_with_entry() -> bogita_core::app::App<MockKeychain> {
-    use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue};
-    use chrono::Utc;
-    use uuid::Uuid;
+pub(super) async fn make_app_with_entry() -> Result<TestApp> {
+    // -- Setup & Fixtures
+    let app = make_app().await?;
+    let vaults = app.registry.list_vaults().await?;
+    let vault = vaults.first().ok_or("should have a vault")?;
+    let identity = app
+        .identity
+        .as_ref()
+        .ok_or("should have an identity")?
+        .clone();
+    let svc = app.registry.vault_service_for(vault, identity);
+    let entry = test_entry(
+        vault.id,
+        "GitHub",
+        vec![test_field(
+            "password",
+            FieldValue::Hidden("s3cret".to_string()),
+            FieldType::Token,
+            true,
+            0,
+        )],
+    );
 
-    let app = make_app().await;
-    let vaults = app.registry.list_vaults().await.unwrap();
-    let vault = vaults.first().unwrap();
-    let svc = app
-        .registry
-        .vault_service_for(vault, app.identity.as_ref().unwrap().clone());
-    let entry = Entry {
-        id: Uuid::new_v4(),
-        vault_id: vault.id,
-        name: "GitHub".to_string(),
-        entry_type: EntryType::Token,
-        fields: vec![Field {
-            id: Uuid::new_v4(),
-            key: "password".to_string(),
-            field_type: FieldType::Token,
-            value: FieldValue::Hidden("s3cret".to_string()),
-            encrypted: true,
-            idx: 0,
-        }],
-        created_at: Utc::now().timestamp(),
-        modified_at: Utc::now().timestamp(),
-    };
-    svc.add_entry(&entry).await.unwrap();
-    app
+    // -- Exec
+    svc.save_entry(&entry).await?;
+
+    // -- Check
+    Ok(app)
 }

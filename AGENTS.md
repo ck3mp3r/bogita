@@ -35,6 +35,29 @@ crates/main - bogita binary: thin dispatch to cli and tui
 CLI handlers are generic over S: Storage, C: Crypto + Clone.
 App struct in crates/core/src/app.rs is the composition root.
 
+### External State Isolation
+
+Debug and production state are separated at compile time by the `cfg(debug_assertions)` gate, which
+is compiled into exactly two places: the `APP_NAME` const
+(`crates/core/src/storage/config.rs:10-21`) and the keychain service name in
+`KeychainAdapter::new` (`crates/core/src/storage/keychain.rs:15-18`). Every other external-state
+touchpoint - vault database, identity file, config, logs, sockets - derives its identifying string
+from one of those two sites, so a debug binary cannot open the production database or keychain
+entry by default - only an explicit path override in `config.toml` can cross the line.
+`[profile.release-with-debug]`
+(`Cargo.toml:21-24`) inherits `release`, which leaves `debug_assertions` off, so a
+release-with-debug build runs production state by design, not as a dev build.
+
+- Any new external-state touchpoint - file path, socket path, keychain service or account, temp
+  artifact - derives its identifying string from the `APP_NAME`-gated consts in
+  `crates/core/src/storage/config.rs:10-21` and its keychain service from the gate in
+  `crates/core/src/storage/keychain.rs:15-18`. Never hardcode `bogita` or `bogita-dev` elsewhere.
+
+The agent socket is the cautionary precedent: it never passed through the gate, turned out to be
+dead stub wiring, and was deleted in commit 72ca50f - the dispatch stub survives at
+`crates/main/src/main.rs:84` (`Dispatch::Stub`, resolved by `not_implemented()` at
+`crates/main/src/main.rs:27`) and the `socket` argument at `crates/cli/src/args.rs:115`.
+
 ## Testing Philosophy
 
 ### TDD: RED, GREEN, REFACTOR

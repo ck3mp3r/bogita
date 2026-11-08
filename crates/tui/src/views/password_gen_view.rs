@@ -63,15 +63,15 @@ impl PasswordGenView {
 
     // ── accessors ─────────────────────────────────────────────────────────────
 
-    pub fn length(&self) -> usize {
+    pub(crate) fn length(&self) -> usize {
         self.length
     }
 
-    pub fn charset_options(&self) -> &CharsetOptions {
+    pub(crate) fn charset_options(&self) -> &CharsetOptions {
         &self.opts
     }
 
-    pub fn current_password(&self) -> &str {
+    pub(crate) fn current_password(&self) -> &str {
         &self.current
     }
 
@@ -169,10 +169,8 @@ impl PasswordGenView {
             .split(inner);
 
         // Password display
-        let masked: String = self.current.chars().map(|_| '•').collect();
-        let _ = masked; // we show it plainly — it's temporary in memory
         frame.render_widget(
-            Paragraph::new(self.current.as_str()).style(
+            Paragraph::new(self.current_password()).style(
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -191,13 +189,13 @@ impl PasswordGenView {
 
         // Length
         frame.render_widget(
-            Paragraph::new(format!("Length: {}  [+/-]", self.length))
+            Paragraph::new(format!("Length: {}  [+/-]", self.length()))
                 .style(Style::default().fg(Color::Cyan)),
             rows[3],
         );
 
         // Charset toggles row 1
-        let o = &self.opts;
+        let o = self.charset_options();
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 toggle_span("[u] upper", o.uppercase),

@@ -2,7 +2,6 @@
 
 pub mod entity;
 pub mod key;
-pub mod preset;
 pub mod sync;
 pub mod vault;
 

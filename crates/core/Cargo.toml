@@ -9,10 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-default = ["sqlite", "git"]
+default = ["sqlite"]
 sqlite = ["dep:sqlx"]
-git = ["dep:git2"]
 integration = []
+test-support = ["sqlite"]
 
 [dependencies]
 age = { version = "0.12", default-features = false }
@@ -20,7 +20,6 @@ zeroize = { version = "1.9", features = ["derive"] }
 secrecy = { version = "0.10", features = ["serde"] }
 base64 = "0.23"
 sqlx = { version = "0.9", optional = true, features = ["runtime-tokio", "sqlite", "migrate"] }
-git2 = { version = "0.21", optional = true, default-features = false }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs"] }
 async-trait = "0.1"
 thiserror = "2.0"

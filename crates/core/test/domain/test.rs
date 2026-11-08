@@ -1,102 +1,111 @@
 //! Tests for domain types
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 use crate::domain::*;
 use secrecy::ExposeSecret;
 use std::str::FromStr;
 
 #[test]
-fn test_entry_type_serialization() {
+fn test_entry_type_serialization() -> Result<()> {
     // Test that EntryType serializes to expected snake_case strings
     let token = EntryType::Token;
-    let json = serde_json::to_string(&token).unwrap();
+    let json = serde_json::to_string(&token)?;
     assert_eq!(json, r#""token""#);
 
     let otp = EntryType::Otp;
-    let json = serde_json::to_string(&otp).unwrap();
+    let json = serde_json::to_string(&otp)?;
     assert_eq!(json, r#""otp""#);
 
     let ssh_key = EntryType::SshKey;
-    let json = serde_json::to_string(&ssh_key).unwrap();
+    let json = serde_json::to_string(&ssh_key)?;
     assert_eq!(json, r#""ssh_key""#);
 
     let note = EntryType::Note;
-    let json = serde_json::to_string(&note).unwrap();
+    let json = serde_json::to_string(&note)?;
     assert_eq!(json, r#""note""#);
+    Ok(())
 }
 
 #[test]
-fn test_field_value_text_serialization() {
+fn test_field_value_text_serialization() -> Result<()> {
     let value = FieldValue::Text("hello world".to_string());
-    let json = serde_json::to_string(&value).unwrap();
-    let deserialized: FieldValue = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&value)?;
+    let deserialized: FieldValue = serde_json::from_str(&json)?;
 
     match deserialized {
         FieldValue::Text(s) => assert_eq!(s, "hello world"),
         _ => panic!("Expected Text variant"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_field_value_hidden_serialization() {
+fn test_field_value_hidden_serialization() -> Result<()> {
     let value = FieldValue::Hidden("secret-password".to_string());
-    let json = serde_json::to_string(&value).unwrap();
-    let deserialized: FieldValue = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&value)?;
+    let deserialized: FieldValue = serde_json::from_str(&json)?;
 
     match deserialized {
         FieldValue::Hidden(s) => assert_eq!(s, "secret-password"),
         _ => panic!("Expected Hidden variant"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_field_value_boolean_serialization() {
+fn test_field_value_boolean_serialization() -> Result<()> {
     let value = FieldValue::Boolean(true);
-    let json = serde_json::to_string(&value).unwrap();
-    let deserialized: FieldValue = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&value)?;
+    let deserialized: FieldValue = serde_json::from_str(&json)?;
 
     match deserialized {
         FieldValue::Boolean(b) => assert!(b),
         _ => panic!("Expected Boolean variant"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_field_value_number_serialization() {
+fn test_field_value_number_serialization() -> Result<()> {
     let value = FieldValue::Number(42);
-    let json = serde_json::to_string(&value).unwrap();
-    let deserialized: FieldValue = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&value)?;
+    let deserialized: FieldValue = serde_json::from_str(&json)?;
 
     match deserialized {
         FieldValue::Number(n) => assert_eq!(n, 42),
         _ => panic!("Expected Number variant"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_field_type_serialization() {
+fn test_field_type_serialization() -> Result<()> {
     let field_type = FieldType::Username;
-    let json = serde_json::to_string(&field_type).unwrap();
+    let json = serde_json::to_string(&field_type)?;
     assert_eq!(json, r#""username""#);
 
     let field_type = FieldType::TotpSecret;
-    let json = serde_json::to_string(&field_type).unwrap();
+    let json = serde_json::to_string(&field_type)?;
     assert_eq!(json, r#""totp_secret""#);
+    Ok(())
 }
 
 #[test]
-fn test_field_type_custom_serialization() {
+fn test_field_type_custom_serialization() -> Result<()> {
     let field_type = FieldType::Custom("my_custom_field".to_string());
-    let json = serde_json::to_string(&field_type).unwrap();
-    let deserialized: FieldType = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&field_type)?;
+    let deserialized: FieldType = serde_json::from_str(&json)?;
 
     match deserialized {
         FieldType::Custom(name) => assert_eq!(name, "my_custom_field"),
         _ => panic!("Expected Custom variant"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_field_serialization() {
+fn test_field_serialization() -> Result<()> {
     let field = Field {
         id: Uuid::new_v4(),
         key: "username".to_string(),
@@ -106,8 +115,8 @@ fn test_field_serialization() {
         idx: 0,
     };
 
-    let json = serde_json::to_string(&field).unwrap();
-    let deserialized: Field = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&field)?;
+    let deserialized: Field = serde_json::from_str(&json)?;
 
     assert_eq!(deserialized.key, "username");
     assert_eq!(deserialized.field_type, FieldType::Username);
@@ -118,10 +127,11 @@ fn test_field_serialization() {
         FieldValue::Text(s) => assert_eq!(s, "john@example.com"),
         _ => panic!("Expected Text value"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_entry_with_password_fields() {
+fn test_entry_with_password_fields() -> Result<()> {
     let entry_id = Uuid::new_v4();
     let vault_id = Uuid::new_v4();
 
@@ -174,10 +184,11 @@ fn test_entry_with_password_fields() {
 
     assert_eq!(entry.fields[2].key, "url");
     assert!(!entry.fields[2].encrypted);
+    Ok(())
 }
 
 #[test]
-fn test_entry_with_otp_fields() {
+fn test_entry_with_otp_fields() -> Result<()> {
     let entry = Entry {
         id: Uuid::new_v4(),
         vault_id: Uuid::new_v4(),
@@ -226,10 +237,11 @@ fn test_entry_with_otp_fields() {
         FieldValue::Text(s) => assert_eq!(s, "GitHub"),
         _ => panic!("Expected Text value"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_entry_serialization() {
+fn test_entry_serialization() -> Result<()> {
     let entry = Entry {
         id: Uuid::new_v4(),
         vault_id: Uuid::new_v4(),
@@ -247,31 +259,33 @@ fn test_entry_serialization() {
         }],
     };
 
-    let json = serde_json::to_string(&entry).unwrap();
-    let deserialized: Entry = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&entry)?;
+    let deserialized: Entry = serde_json::from_str(&json)?;
 
     assert_eq!(deserialized.name, "Test Entry");
     assert_eq!(deserialized.entry_type, EntryType::Note);
     assert_eq!(deserialized.fields.len(), 1);
+    Ok(())
 }
 
 #[test]
-fn test_operation_serialization() {
+fn test_operation_serialization() -> Result<()> {
     let insert = Operation::Insert;
-    let json = serde_json::to_string(&insert).unwrap();
+    let json = serde_json::to_string(&insert)?;
     assert_eq!(json, r#""insert""#);
 
     let update = Operation::Update;
-    let json = serde_json::to_string(&update).unwrap();
+    let json = serde_json::to_string(&update)?;
     assert_eq!(json, r#""update""#);
 
     let delete = Operation::Delete;
-    let json = serde_json::to_string(&delete).unwrap();
+    let json = serde_json::to_string(&delete)?;
     assert_eq!(json, r#""delete""#);
+    Ok(())
 }
 
 #[test]
-fn test_change_with_entry() {
+fn test_change_with_entry() -> Result<()> {
     let entry = Entry {
         id: Uuid::new_v4(),
         vault_id: Uuid::new_v4(),
@@ -292,19 +306,20 @@ fn test_change_with_entry() {
 
     assert_eq!(change.entry.name, "Changed Entry");
     assert_eq!(change.operation, Operation::Update);
+    Ok(())
 }
 
 #[test]
-fn test_sync_target_tagged_enum() {
+fn test_sync_target_tagged_enum() -> Result<()> {
     let git_target = SyncTarget::Git(GitConfig {
         path: "/tmp/vault".to_string(),
         remote: "git@github.com:user/vault.git".to_string(),
     });
 
-    let json = serde_json::to_string(&git_target).unwrap();
+    let json = serde_json::to_string(&git_target)?;
     assert!(json.contains(r#""type":"git""#));
 
-    let deserialized: SyncTarget = serde_json::from_str(&json).unwrap();
+    let deserialized: SyncTarget = serde_json::from_str(&json)?;
     match deserialized {
         SyncTarget::Git(config) => {
             assert_eq!(config.path, "/tmp/vault");
@@ -312,21 +327,23 @@ fn test_sync_target_tagged_enum() {
         }
         _ => panic!("Expected Git variant"),
     }
+    Ok(())
 }
 
 #[test]
-fn test_age_recipient_parsing() {
+fn test_age_recipient_parsing() -> Result<()> {
     // Valid age recipient (public key)
     let recipient_str = "age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj";
-    let recipient = AgeRecipient::from_str(recipient_str).unwrap();
+    let recipient = AgeRecipient::from_str(recipient_str)?;
 
     // Should be able to convert back to string
     let serialized = recipient.to_string();
     assert_eq!(serialized, recipient_str);
+    Ok(())
 }
 
 #[test]
-fn test_age_identity_generation() {
+fn test_age_identity_generation() -> Result<()> {
     let identity = AgeIdentity::generate();
 
     // Should be able to derive recipient
@@ -338,4 +355,122 @@ fn test_age_identity_generation() {
 
     // Secret should start with AGE-SECRET-KEY-1
     assert!(secret_str.starts_with("AGE-SECRET-KEY-1"));
+    Ok(())
+}
+
+#[test]
+fn test_field_type_storage_roundtrip_all_variants() -> Result<()> {
+    let variants = [
+        FieldType::Username,
+        FieldType::Token,
+        FieldType::Url,
+        FieldType::Notes,
+        FieldType::Tags,
+        FieldType::Favorite,
+        FieldType::TotpSecret,
+        FieldType::TotpAlgorithm,
+        FieldType::TotpDigits,
+        FieldType::TotpPeriod,
+        FieldType::TotpIssuer,
+        FieldType::TotpAccount,
+        FieldType::SshPrivateKey,
+        FieldType::SshPublicKey,
+        FieldType::SshKeyType,
+        FieldType::SshComment,
+        FieldType::PasswordHistory,
+        FieldType::Custom("custom-key".to_string()),
+    ];
+
+    assert_eq!(variants.len(), 18, "every FieldType variant is covered");
+    for variant in variants {
+        let storage = variant.to_storage();
+        assert_eq!(
+            FieldType::from_storage(&storage),
+            variant,
+            "round-trip failed for {variant:?} via '{storage}'"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_field_type_from_storage_tolerates_unknown_values() -> Result<()> {
+    assert_eq!(
+        FieldType::from_storage("future-type"),
+        FieldType::Custom("future-type".to_string())
+    );
+    assert_eq!(
+        FieldType::from_storage("custom:my-key"),
+        FieldType::Custom("my-key".to_string())
+    );
+    Ok(())
+}
+
+/// Entry with an RFC 6238 SHA-1 secret ("12345678901234567890" in base32) plus
+/// optional sibling period/digits fields.
+fn make_totp_entry(period: Option<i64>, digits: Option<i64>) -> Entry {
+    let mut fields = vec![Field {
+        id: Uuid::new_v4(),
+        key: "secret".to_string(),
+        value: FieldValue::Hidden("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_string()),
+        field_type: FieldType::TotpSecret,
+        encrypted: true,
+        idx: 0,
+    }];
+    if let Some(period) = period {
+        fields.push(Field {
+            id: Uuid::new_v4(),
+            key: "period".to_string(),
+            value: FieldValue::Number(period),
+            field_type: FieldType::TotpPeriod,
+            encrypted: false,
+            idx: 1,
+        });
+    }
+    if let Some(digits) = digits {
+        fields.push(Field {
+            id: Uuid::new_v4(),
+            key: "digits".to_string(),
+            value: FieldValue::Number(digits),
+            field_type: FieldType::TotpDigits,
+            encrypted: false,
+            idx: 2,
+        });
+    }
+
+    Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "GitHub OTP".to_string(),
+        entry_type: EntryType::Otp,
+        created_at: 0,
+        modified_at: 0,
+        fields,
+    }
+}
+
+#[test]
+fn test_entry_totp_code_honors_sibling_digits() -> Result<()> {
+    // RFC 6238 SHA-1 vector at T=59 with 8 digits.
+    let entry = make_totp_entry(None, Some(8));
+    let (code, remaining) = entry
+        .totp_code("secret", 59)
+        .ok_or("should have totp code")?;
+
+    assert_eq!(code, "94287082");
+    assert_eq!(remaining, 1, "default period is 30 seconds");
+    Ok(())
+}
+
+#[test]
+fn test_entry_totp_code_honors_sibling_period() -> Result<()> {
+    // Counter 1 at T=61 with a 60-second period is the same HMAC as T=59/30s.
+    let entry = make_totp_entry(Some(60), Some(8));
+    let (code, remaining) = entry
+        .totp_code("secret", 61)
+        .ok_or("should have totp code")?;
+
+    assert_eq!(code, "94287082");
+    assert_eq!(remaining, 59, "sibling period overrides the 30s default");
+    Ok(())
 }

@@ -17,8 +17,9 @@ pub struct SqliteStorage<C>
 where
     C: Crypto,
 {
+    /// Adapter-internal connection pool — siblings in `storage` may borrow it.
     pub(crate) pool: SqlitePool,
-    pub(crate) crypto: C,
+    crypto: C,
 }
 
 impl<C> SqliteStorage<C>
@@ -110,6 +111,6 @@ where
 
 // region:    --- Tests
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../test/storage/sqlite.rs"]
-mod sqlite_test;
+#[path = "../../test/storage/sqlite/test.rs"]
+mod test;
 // endregion: --- Tests

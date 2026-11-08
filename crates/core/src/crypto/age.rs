@@ -3,7 +3,7 @@
 //! Implements the Crypto port trait using age encryption for field-level encryption.
 //!
 //! Note: The age API requires `&dyn Recipient` and `&dyn Identity` trait references
-//! in iterators. We use stack references (not Box<dyn>) to minimize heap allocations.
+//! in iterators. We use stack references (not `Box<dyn>`) to minimize heap allocations.
 
 use crate::domain::{AgeIdentity, AgeRecipient};
 use crate::error::{CryptoError, Result};

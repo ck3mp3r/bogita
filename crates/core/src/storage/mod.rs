@@ -11,8 +11,5 @@ pub mod sqlite;
 pub mod vault_store;
 
 // Re-export for convenience
-pub use config::{
-    default_config_dir, default_data_dir, default_db_path, default_identity_path, AppConfig,
-};
-pub use identity::{read_identity, write_identity};
+pub use config::{default_db_path, default_identity_path, AppConfig};
 pub use keychain::KeychainAdapter;

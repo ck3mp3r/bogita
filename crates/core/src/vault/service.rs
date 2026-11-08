@@ -1,47 +1,37 @@
-//! VaultService — application layer coordinating storage and crypto adapters.
+//! VaultService — application layer coordinating entry operations over the storage adapter.
 
 use crate::domain::{AgeIdentity, AgeRecipient, Entry};
 use crate::error::Result;
-use crate::ports::{Crypto, EntryStore};
+use crate::ports::EntryStore;
 use uuid::Uuid;
 
-/// Application service that coordinates storage and crypto via static dispatch.
-pub struct VaultService<S, C>
+/// Application service that coordinates entry storage via static dispatch.
+///
+/// Encrypted fields are written through the storage adapter with this vault's
+/// recipients; reads pass the caller's identity to the same adapter.
+pub struct VaultService<S>
 where
     S: EntryStore,
-    C: Crypto,
 {
     storage: S,
-    #[allow(dead_code)]
-    crypto: C,
     recipients: Vec<AgeRecipient>,
     identity: AgeIdentity,
 }
 
-impl<S, C> VaultService<S, C>
+impl<S> VaultService<S>
 where
     S: EntryStore,
-    C: Crypto,
 {
-    pub fn new(
-        storage: S,
-        crypto: C,
-        recipients: Vec<AgeRecipient>,
-        identity: AgeIdentity,
-    ) -> Self {
+    pub fn new(storage: S, recipients: Vec<AgeRecipient>, identity: AgeIdentity) -> Self {
         Self {
             storage,
-            crypto,
             recipients,
             identity,
         }
     }
 
-    pub async fn add_entry(&self, entry: &Entry) -> Result<()> {
-        self.storage.save_entry(entry, &self.recipients).await
-    }
-
-    pub async fn update_entry(&self, entry: &Entry) -> Result<()> {
+    /// Persist an entry, encrypting its fields with this vault's recipients.
+    pub async fn save_entry(&self, entry: &Entry) -> Result<()> {
         self.storage.save_entry(entry, &self.recipients).await
     }
 

@@ -7,7 +7,13 @@ use crate::error::{ConfigError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// App name used as the XDG prefix, varies by build profile.
+/// App name used as the XDG prefix for every path this crate builds.
+///
+/// `cfg(debug_assertions)` is the isolation gate: debug builds resolve to
+/// `bogita-dev`, release builds to `bogita`. `[profile.release-with-debug]`
+/// inherits `release`, which leaves `debug_assertions` off, so a
+/// release-with-debug build runs production state (the `bogita` service and
+/// paths) by design.
 #[cfg(debug_assertions)]
 const APP_NAME: &str = "bogita-dev";
 
@@ -19,17 +25,43 @@ fn xdg_dirs() -> xdg::BaseDirectories {
 }
 
 /// `$XDG_DATA_HOME/bogita[-dev]/`  (default: `~/.local/share/bogita[-dev]/`)
-pub fn default_data_dir() -> PathBuf {
+fn default_data_dir() -> PathBuf {
     xdg_dirs()
         .get_data_home()
-        .expect("failed to resolve XDG data home")
+        .unwrap_or_else(fallback_data_home)
 }
 
 /// `$XDG_CONFIG_HOME/bogita[-dev]/`  (default: `~/.config/bogita[-dev]/`)
 pub fn default_config_dir() -> PathBuf {
     xdg_dirs()
         .get_config_home()
-        .expect("failed to resolve XDG config home")
+        .unwrap_or_else(fallback_config_home)
+}
+
+/// Data dir used when the XDG base dirs cannot be resolved.
+fn fallback_data_home() -> PathBuf {
+    env_dir("XDG_DATA_HOME")
+        .or_else(|| home_dir().map(|home| home.join(".local").join("share")))
+        .unwrap_or_default()
+        .join(APP_NAME)
+}
+
+/// Config dir used when the XDG base dirs cannot be resolved.
+fn fallback_config_home() -> PathBuf {
+    env_dir("XDG_CONFIG_HOME")
+        .or_else(|| home_dir().map(|home| home.join(".config")))
+        .unwrap_or_default()
+        .join(APP_NAME)
+}
+
+fn env_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env_dir("HOME")
 }
 
 /// `$XDG_DATA_HOME/bogita[-dev]/vault.db`

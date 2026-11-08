@@ -45,9 +45,6 @@ pub enum DbError {
     #[error("vault not found: {0}")]
     VaultNotFound(uuid::Uuid),
 
-    #[error("duplicate entry name: {0}")]
-    DuplicateName(String),
-
     #[error("database connection failed: {0}")]
     ConnectionFailed(String),
 
@@ -105,29 +102,14 @@ pub enum ConfigError {
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
-    #[error("invalid entry name: {0}")]
-    InvalidName(String),
-
-    #[error("invalid URL: {0}")]
-    InvalidUrl(String),
-
-    #[error("empty password")]
-    EmptyPassword,
-
     #[error("invalid OTP secret: {0}")]
     InvalidOtpSecret(String),
-
-    #[error("invalid OTP URI: {0}")]
-    InvalidOtpUri(String),
 }
 
 #[derive(Debug, Error)]
 pub enum SessionError {
     #[error("vault is locked — run `bogita unlock`")]
     Locked,
-
-    #[error("keychain unavailable: {0}")]
-    KeychainUnavailable(String),
 }
 
 // region:    --- Tests
