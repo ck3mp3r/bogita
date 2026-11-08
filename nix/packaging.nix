@@ -7,7 +7,7 @@
   pkgs,
   cargoToml,
   cargoLock,
-  overlays,
+  overlays ? [],
 }: let
   supportedTargets = ["aarch64-darwin" "aarch64-linux" "x86_64-darwin" "x86_64-linux"];
 
@@ -31,7 +31,7 @@
       installData
       supportedTargets
       ;
-    fenix = inputs.fenix;
+    workspaceMember = "bogita";
     nixpkgs = inputs.nixpkgs;
     src = ../.;
     packageName = "bogita";
@@ -49,7 +49,7 @@
       installData
       supportedTargets
       ;
-    fenix = inputs.fenix;
+    workspaceMember = "bogita";
     nixpkgs = inputs.nixpkgs;
     src = ../.;
     packageName = "archive";
@@ -63,7 +63,7 @@ in {
   apps = {
     default = {
       type = "app";
-      program = "\${regularPackages.default}/bin/bogita";
+      program = "${regularPackages.default}/bin/bogita";
     };
   };
 }

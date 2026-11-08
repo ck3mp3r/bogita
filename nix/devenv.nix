@@ -5,90 +5,82 @@
   inputs,
   system,
 }: let
-  fenix = inputs.fenix.packages.${system};
+  rustnix = inputs.rustnix.lib.rust;
 
-  # Stable Rust toolchain with essential components
-  toolchain = fenix.combine [
-    fenix.stable.cargo
-    fenix.stable.rustc
-    fenix.stable.rust-analyzer
-    fenix.stable.clippy
-    fenix.stable.rustfmt
-    fenix.stable.llvm-tools-preview
+  # Stable Rust toolchain with dev components, from rustnix
+  # (includes the Darwin rustc LLVM dylib fix and the host target std)
+  toolchain = rustnix.mkToolchain {
+    inherit system;
+    extras = ["clippy" "rustfmt" "rust-analyzer" "llvm-tools-preview"];
+  };
+
+  # nixpkgs cargo-llvm-cov runs its test suite at build time and fails under
+  # this toolchain; skip tests like rustnix.devShells.coverage does
+  cargoLlvmCov = pkgs.cargo-llvm-cov.overrideAttrs (_: {
+    doCheck = false;
+  });
+
+  # Helper commands as real executables on PATH: they must work in any shell
+  # (nushell via direnv included), where bash functions from shellHook cannot exist
+  helperHelpText = ''
+    echo ""
+    echo "Bogita Development Shell"
+    echo "========================"
+    echo ""
+    echo "Helper commands:"
+    echo "  check      - Run cargo check"
+    echo "  fmt        - Run cargo fmt"
+    echo "  tests      - Run cargo test"
+    echo "  clippy     - Run cargo clippy (strict)"
+    echo "  coverage   - Generate code coverage report"
+    echo "  build      - Build release binary"
+    echo ""
+    echo "Tools available:"
+    echo "  sqlx       - SQLx CLI for migrations"
+    echo "  age        - Encryption tool"
+    echo "  prek       - Git hooks manager"
+    echo ""
+  '';
+
+  helpers = [
+    (pkgs.writeShellScriptBin "check" ''exec cargo check "$@"'')
+    (pkgs.writeShellScriptBin "fmt" ''exec cargo fmt "$@"'')
+    (pkgs.writeShellScriptBin "tests" ''exec cargo test "$@"'')
+    (pkgs.writeShellScriptBin "clippy" ''exec cargo clippy --all-targets --all-features -- -D warnings "$@"'')
+    (pkgs.writeShellScriptBin "coverage" ''exec cargo llvm-cov --html --open "$@"'')
+    (pkgs.writeShellScriptBin "build" ''exec cargo build --release "$@"'')
+    (pkgs.writeShellScriptBin "help-bogita" helperHelpText)
   ];
 
-  # Helper scripts as shell functions
-  helperScripts = ''
-    # Helper functions
-    check() {
-      cargo check "$@"
-    }
-
-    fmt() {
-      cargo fmt "$@"
-    }
-
-    tests() {
-      cargo test "$@"
-    }
-
-    clippy() {
-      cargo clippy --all-targets --all-features -- -D warnings "$@"
-    }
-
-    coverage() {
-      cargo llvm-cov --html --open "$@"
-    }
-
-    build() {
-      cargo build --release "$@"
-    }
-
-    # Print available commands
-    help-bogita() {
-      echo ""
-      echo "Bogita Development Shell"
-      echo "========================"
-      echo ""
-      echo "Helper commands:"
-      echo "  check      - Run cargo check"
-      echo "  fmt        - Run cargo fmt"
-      echo "  tests      - Run cargo test"
-      echo "  clippy     - Run cargo clippy (strict)"
-      echo "  coverage   - Generate code coverage report"
-      echo "  build      - Build release binary"
-      echo ""
-      echo "Tools available:"
-      echo "  sqlx       - SQLx CLI for migrations"
-      echo "  age        - Encryption tool"
-      echo "  prek       - Git hooks manager"
-      echo ""
-    }
-  '';
+  helpersPath = pkgs.lib.makeBinPath helpers;
 in
   pkgs.mkShell {
     name = "bogita-dev";
 
-    buildInputs = [
-      # Rust toolchain
-      toolchain
+    buildInputs =
+      helpers
+      ++ [
+        # Rust toolchain
+        toolchain
 
-      # Development tools
-      pkgs.sqlx-cli # Database migrations
-      pkgs.cargo-tarpaulin # Code coverage (alternative)
-      pkgs.cargo-llvm-cov # Code coverage (primary)
+        # Development tools
+        pkgs.sqlx-cli # Database migrations
+        pkgs.cargo-tarpaulin # Code coverage (alternative)
+        cargoLlvmCov # Code coverage (primary)
 
-      # Security tools
-      pkgs.age # Encryption
-      pkgs.openssh # SSH utilities
-      pkgs.git # Git operations
+        # Security tools
+        pkgs.age # Encryption
+        pkgs.openssh # SSH utilities
+        pkgs.git # Git operations
 
-      # Git hooks
-      pkgs.prek
-    ];
+        # Git hooks
+        pkgs.prek
+      ]
+      ++ helpers;
 
     shellHook = ''
-      ${helperScripts}
+      # Helpers must win over same-named binaries (e.g. GNU fmt from coreutils)
+      export PATH="${helpersPath}:$PATH"
 
       # Initialize prek on shell entry
       if [ -f prek.toml ]; then

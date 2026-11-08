@@ -5,13 +5,10 @@
   inputs,
   system,
 }: let
-  fenix = inputs.fenix.packages.${system};
+  rustnix = inputs.rustnix.lib.rust;
 
   # Minimal stable Rust toolchain for CI
-  toolchain = fenix.combine [
-    fenix.stable.cargo
-    fenix.stable.rustc
-  ];
+  toolchain = rustnix.mkToolchain {inherit system;};
 in
   pkgs.mkShell {
     name = "bogita-ci";
