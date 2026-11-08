@@ -44,6 +44,9 @@ pub use form::EntryForm;
 
 // region:    --- Tests
 #[cfg(test)]
+#[path = "../../../test/views/entry_form/cursor.rs"]
+mod entry_form_cursor_test;
+#[cfg(test)]
 #[path = "../../../test/views/entry_form/editing.rs"]
 mod entry_form_editing_test;
 #[cfg(test)]

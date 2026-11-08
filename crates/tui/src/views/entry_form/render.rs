@@ -139,10 +139,7 @@ impl EntryForm {
         frame.render_stateful_widget(name_widget, row, &mut self.name_state);
         if self.name_state.focus.get() {
             if let Some((cx, cy)) = self.name_state.screen_cursor() {
-                frame.set_cursor_position((
-                    self.name_state.inner.x + cx,
-                    self.name_state.inner.y + cy,
-                ));
+                frame.set_cursor_position((cx, cy));
             }
         }
     }
@@ -201,7 +198,7 @@ impl EntryForm {
         frame.render_stateful_widget(key_widget, area, &mut ff.key_state);
         if key_f {
             if let Some((cx, cy)) = ff.key_state.screen_cursor() {
-                frame.set_cursor_position((ff.key_state.inner.x + cx, ff.key_state.inner.y + cy));
+                frame.set_cursor_position((cx, cy));
             }
         }
     }
@@ -265,7 +262,7 @@ impl EntryForm {
             frame.render_stateful_widget(textarea, area, state);
             if val_f {
                 if let Some((cx, cy)) = state.screen_cursor() {
-                    frame.set_cursor_position((state.inner.x + cx, state.inner.y + cy));
+                    frame.set_cursor_position((cx, cy));
                 }
             }
         } else {
@@ -273,10 +270,7 @@ impl EntryForm {
             frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
             if val_f {
                 if let Some((cx, cy)) = ff.value_state.screen_cursor() {
-                    frame.set_cursor_position((
-                        ff.value_state.inner.x + cx,
-                        ff.value_state.inner.y + cy,
-                    ));
+                    frame.set_cursor_position((cx, cy));
                 }
             }
         }
@@ -302,10 +296,7 @@ impl EntryForm {
         frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
         if val_f {
             if let Some((cx, cy)) = ff.value_state.screen_cursor() {
-                frame.set_cursor_position((
-                    ff.value_state.inner.x + cx,
-                    ff.value_state.inner.y + cy,
-                ));
+                frame.set_cursor_position((cx, cy));
             }
         }
     }
@@ -326,10 +317,7 @@ impl EntryForm {
         frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
         if val_f {
             if let Some((cx, cy)) = ff.value_state.screen_cursor() {
-                frame.set_cursor_position((
-                    ff.value_state.inner.x + cx,
-                    ff.value_state.inner.y + cy,
-                ));
+                frame.set_cursor_position((cx, cy));
             }
         }
     }
