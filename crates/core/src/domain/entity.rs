@@ -142,6 +142,7 @@ pub enum FieldType {
     Notes,
     Tags,
     Favorite,
+    Boolean,
 
     // OTP/TOTP fields
     TotpSecret,
@@ -174,6 +175,7 @@ impl FieldType {
             Self::Notes => "notes".to_string(),
             Self::Tags => "tags".to_string(),
             Self::Favorite => "favorite".to_string(),
+            Self::Boolean => "boolean".to_string(),
             Self::TotpSecret => "totp_secret".to_string(),
             Self::TotpAlgorithm => "totp_algorithm".to_string(),
             Self::TotpDigits => "totp_digits".to_string(),
@@ -203,6 +205,7 @@ impl FieldType {
                 "notes" => Self::Notes,
                 "tags" => Self::Tags,
                 "favorite" => Self::Favorite,
+                "boolean" => Self::Boolean,
                 "totp_secret" => Self::TotpSecret,
                 "totp_algorithm" => Self::TotpAlgorithm,
                 "totp_digits" => Self::TotpDigits,

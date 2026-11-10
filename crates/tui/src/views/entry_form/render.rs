@@ -144,20 +144,29 @@ impl EntryForm {
         }
     }
 
-    /// A field row — [key 35%] [value 50%] [type 15%].
+    /// A field row — [key 35%] [type 15%] [value 50%].
     fn render_field_row(&mut self, frame: &mut Frame, row: Rect, abs_i: usize, inner: Rect) {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Percentage(35),
-                Constraint::Percentage(50),
                 Constraint::Percentage(15),
+                Constraint::Percentage(50),
             ])
             .split(row);
 
         self.render_key_cell(frame, cols[0], abs_i);
-        self.render_value_cell(frame, cols[1], abs_i);
-        self.render_type_cell(frame, cols[2], abs_i, inner);
+        self.render_type_cell(frame, cols[1], abs_i, inner);
+        self.render_value_cell(frame, cols[2], abs_i);
+    }
+
+    /// `true` when this row's value carries a value-format error.
+    fn value_has_error(&self, abs_i: usize) -> bool {
+        self.validation_errors
+            .contains(&ValidationIssue::InvalidSshKey(abs_i))
+            || self
+                .validation_errors
+                .contains(&ValidationIssue::InvalidTotp(abs_i))
     }
 
     fn render_key_cell(&mut self, frame: &mut Frame, area: Rect, abs_i: usize) {
@@ -203,8 +212,10 @@ impl EntryForm {
         }
     }
 
-    /// Value cell — the badge in the title shows the field type label.
+    /// Value cell — the badge in the title shows the field type label, and an
+    /// invalid value carries the same ⚠ marker as an invalid key cell.
     fn render_value_cell(&mut self, frame: &mut Frame, area: Rect, abs_i: usize) {
+        let value_has_error = self.value_has_error(abs_i);
         let (is_notes, is_obscured, val_f, badge, is_revealed) = {
             let Some(ff) = self.fields.get_mut(abs_i) else {
                 return;
@@ -221,11 +232,13 @@ impl EntryForm {
                 self.revealed_secret_fields.contains(&abs_i),
             )
         };
-        let value_title = if is_revealed {
-            format!(" Value {badge} [revealed] ")
-        } else {
-            format!(" Value {badge} ")
+        let suffix = match (is_revealed, value_has_error) {
+            (true, true) => " [revealed] ⚠ ",
+            (true, false) => " [revealed] ",
+            (false, true) => " ⚠ ",
+            (false, false) => " ",
         };
+        let value_title = format!(" Value {badge}{suffix}");
 
         if is_notes {
             self.render_notes_value(frame, area, abs_i, &value_title, val_f);
@@ -246,6 +259,7 @@ impl EntryForm {
         title: &str,
         val_f: bool,
     ) {
+        let error = self.value_has_error(abs_i);
         let Some(ff) = self.fields.get_mut(abs_i) else {
             return;
         };
@@ -258,7 +272,7 @@ impl EntryForm {
                 } else {
                     Style::default()
                 })
-                .block(value_block(title, val_f));
+                .block(value_block(title, val_f, error));
             frame.render_stateful_widget(textarea, area, state);
             if val_f {
                 if let Some((cx, cy)) = state.screen_cursor() {
@@ -266,7 +280,7 @@ impl EntryForm {
                 }
             }
         } else {
-            let val_widget = plain_value_input(title, val_f);
+            let val_widget = plain_value_input(title, val_f, error);
             frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
             if val_f {
                 if let Some((cx, cy)) = ff.value_state.screen_cursor() {
@@ -286,10 +300,11 @@ impl EntryForm {
         val_f: bool,
         is_revealed: bool,
     ) {
+        let error = self.value_has_error(abs_i);
         let Some(ff) = self.fields.get_mut(abs_i) else {
             return;
         };
-        let mut val_widget = plain_value_input(title, val_f);
+        let mut val_widget = plain_value_input(title, val_f, error);
         if !is_revealed {
             val_widget = val_widget.passwd();
         }
@@ -310,10 +325,11 @@ impl EntryForm {
         title: &str,
         val_f: bool,
     ) {
+        let error = self.value_has_error(abs_i);
         let Some(ff) = self.fields.get_mut(abs_i) else {
             return;
         };
-        let val_widget = plain_value_input(title, val_f);
+        let val_widget = plain_value_input(title, val_f, error);
         frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
         if val_f {
             if let Some((cx, cy)) = ff.value_state.screen_cursor() {
@@ -374,7 +390,7 @@ impl EntryForm {
 
     /// Hint bar — field management keys plus scroll indicators.
     fn render_hint_bar(&self, frame: &mut Frame, row: Rect, end: usize) {
-        let mut hint_text = " [+] add field  [-] remove field ".to_string();
+        let mut hint_text = " [Alt-n] add field  [Alt-d] remove field ".to_string();
         if self.scroll_offset > 0 {
             hint_text.push_str(" ↑ ");
         }
@@ -415,7 +431,7 @@ fn form_rows(inner: Rect, field_rows: usize) -> Vec<Rect> {
 }
 
 /// The bordered block shared by every value cell.
-fn value_block<'a>(title: &'a str, focused: bool) -> Block<'a> {
+fn value_block<'a>(title: &'a str, focused: bool, error: bool) -> Block<'a> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(if focused {
@@ -423,11 +439,12 @@ fn value_block<'a>(title: &'a str, focused: bool) -> Block<'a> {
         } else {
             BorderType::Plain
         })
+        .border_style(Style::default().fg(if error { Color::Red } else { Color::default() }))
         .title(title)
 }
 
 /// A plain (non-masked) value input.
-fn plain_value_input<'a>(title: &'a str, focused: bool) -> TextInput<'a> {
+fn plain_value_input<'a>(title: &'a str, focused: bool, error: bool) -> TextInput<'a> {
     TextInput::new()
         .style(Style::default())
         .focus_style(
@@ -435,16 +452,18 @@ fn plain_value_input<'a>(title: &'a str, focused: bool) -> TextInput<'a> {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
-        .block(value_block(title, focused))
+        .block(value_block(title, focused, error))
 }
 
 /// The field-type selector, shared by the inline cell and the open popup.
+///
+/// The items derive from [`FormFieldType::TABLE`], so the picker order and the
+/// labels cannot drift from the type list.
 fn type_selector() -> Choice<'static, usize> {
-    Choice::new()
-        .item(0, "text")
-        .item(1, "username")
-        .item(2, "token")
-        .item(3, "totp")
-        .item(4, "ssh-key")
-        .item(5, "notes")
+    FormFieldType::TABLE
+        .iter()
+        .enumerate()
+        .fold(Choice::new(), |choice, (index, (_, label, _))| {
+            choice.item(index, *label)
+        })
 }

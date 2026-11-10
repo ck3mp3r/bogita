@@ -104,6 +104,18 @@ pub enum ConfigError {
 pub enum ValidationError {
     #[error("invalid OTP secret: {0}")]
     InvalidOtpSecret(String),
+
+    #[error("invalid openssh pem: {0}")]
+    InvalidSshKey(String),
+
+    #[error("passphrase-protected keys are not supported in v1")]
+    PassphraseProtectedKey,
+
+    #[error("ssh key generation failed: {0}")]
+    SshKeygen(String),
+
+    #[error("{0}")]
+    UnsupportedAgentAlgorithm(String),
 }
 
 #[derive(Debug, Error)]

@@ -367,6 +367,7 @@ fn test_field_type_storage_roundtrip_all_variants() -> Result<()> {
         FieldType::Notes,
         FieldType::Tags,
         FieldType::Favorite,
+        FieldType::Boolean,
         FieldType::TotpSecret,
         FieldType::TotpAlgorithm,
         FieldType::TotpDigits,
@@ -381,7 +382,7 @@ fn test_field_type_storage_roundtrip_all_variants() -> Result<()> {
         FieldType::Custom("custom-key".to_string()),
     ];
 
-    assert_eq!(variants.len(), 18, "every FieldType variant is covered");
+    assert_eq!(variants.len(), 19, "every FieldType variant is covered");
     for variant in variants {
         let storage = variant.to_storage();
         assert_eq!(

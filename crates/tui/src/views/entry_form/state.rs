@@ -1,10 +1,20 @@
 //! Derived `EntryForm` state: validation, focus rebuilding, and scroll upkeep.
 
+use bogita_core::domain::SshKeyMaterial;
+use bogita_core::service::otp::decode_secret;
 use rat_focus::{Focus, FocusBuilder};
 use std::collections::HashSet;
 
 use super::field::{FormFieldType, SlotKind, ValidationIssue};
 use super::EntryForm;
+
+/// `true` when the PEM armor is both opened and closed.
+///
+/// Only a closed armor is a complete input; anything shorter is still being
+/// typed or pasted and must not be judged yet.
+fn has_complete_armor(value: &str) -> bool {
+    value.contains("-----BEGIN") && value.contains("-----END")
+}
 
 impl EntryForm {
     /// Re-run validation and update `validation_errors`.
@@ -36,6 +46,55 @@ impl EntryForm {
                 }
             }
         }
+
+        // The agent-servable gate accepts only true or false.
+        for (i, f) in self.fields.iter().enumerate() {
+            if f.is_agent_servable()
+                && FormFieldType::parse_agent_servable(f.value_state.text()).is_none()
+            {
+                self.validation_errors
+                    .insert(ValidationIssue::InvalidAgentServable(i));
+            }
+        }
+
+        // Value-format rules. Cheap rules run on every event; a complete-input
+        // rule (SSH armor) waits until the armor is closed or the slot is left,
+        // so mid-typing never flags half a key.
+        let focused_slot = self.focused_slot();
+        let mut value_issues: Vec<ValidationIssue> = Vec::new();
+        for (i, f) in self.fields.iter().enumerate() {
+            let value = self.field_value_text(f);
+            if value.is_empty() {
+                continue;
+            }
+            let slot_focused = matches!(focused_slot, SlotKind::Value(j) if j == i);
+            match f.field_type {
+                FormFieldType::SshKey => {
+                    let incomplete_while_typing = slot_focused && !has_complete_armor(&value);
+                    if !incomplete_while_typing && Self::ssh_key_parse_error(&value).is_some() {
+                        value_issues.push(ValidationIssue::InvalidSshKey(i));
+                    }
+                }
+                FormFieldType::Totp if !Self::totp_secret_is_valid(&value) => {
+                    value_issues.push(ValidationIssue::InvalidTotp(i));
+                }
+                _ => {}
+            }
+        }
+        self.validation_errors.extend(value_issues);
+    }
+
+    /// Parse error for an SshKey value, or `None` when it parses.
+    ///
+    /// The form door and the realtime rule share this one predicate so they
+    /// can never disagree about what a valid key is.
+    pub(super) fn ssh_key_parse_error(value: &str) -> Option<String> {
+        SshKeyMaterial::validate(value).err().map(|e| e.to_string())
+    }
+
+    /// `true` when a TOTP secret decodes as base32.
+    pub(super) fn totp_secret_is_valid(value: &str) -> bool {
+        decode_secret(value).is_ok()
     }
 
     /// Whether the form has any validation errors.
@@ -67,6 +126,28 @@ impl EntryForm {
         if dupes > 0 {
             return format!("{dupes} duplicate key{}", if dupes > 1 { "s" } else { "" });
         }
+        if self
+            .validation_errors
+            .iter()
+            .any(|e| matches!(e, ValidationIssue::InvalidAgentServable(_)))
+        {
+            return "agent servable must be true or false".to_string();
+        }
+        if let Some(i) = self.validation_errors.iter().find_map(|e| match e {
+            ValidationIssue::InvalidSshKey(i) => Some(*i),
+            _ => None,
+        }) {
+            return format!(
+                "Field {}: private key is not a valid OpenSSH private key",
+                i + 1
+            );
+        }
+        if let Some(i) = self.validation_errors.iter().find_map(|e| match e {
+            ValidationIssue::InvalidTotp(i) => Some(*i),
+            _ => None,
+        }) {
+            return format!("Field {}: TOTP secret must be base32", i + 1);
+        }
         String::new()
     }
 
@@ -85,6 +166,7 @@ impl EntryForm {
         fb.widget(&self.name_state);
         for ff in &self.fields {
             fb.widget(&ff.key_state);
+            fb.widget(&ff.type_state);
             if ff.field_type == FormFieldType::Notes {
                 if let Some(state) = ff.textarea_state.as_ref() {
                     fb.widget(state);
@@ -92,7 +174,6 @@ impl EntryForm {
             } else {
                 fb.widget(&ff.value_state);
             }
-            fb.widget(&ff.type_state);
         }
         self.focus = fb.build();
         &mut self.focus

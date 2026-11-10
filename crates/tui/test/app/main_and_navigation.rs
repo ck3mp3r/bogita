@@ -408,15 +408,14 @@ async fn g_key_on_password_slot_opens_gen_view() -> Result<()> {
     // Open add form → add a field → navigate to type slot → select Token → back to value slot
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('+'), KeyModifiers::NONE); // add field, focus → key slot
-    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // focus → value slot (plain)
+    tui.handle_key_with_modifiers(KeyCode::Char('n'), KeyModifiers::ALT); // add field, focus → key slot
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // focus → type slot
-    tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE); // open dropdown
+    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // open dropdown
     tui.handle_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::NONE); // → 1=Username
     tui.handle_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::NONE); // → 2=Token
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // confirm selection
-    tui.handle_key_with_modifiers(KeyCode::BackTab, KeyModifiers::NONE); // back to value slot (now "token")
-    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::NONE); // open password gen
+    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // forward to the value slot (now "token")
+    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // open password gen
 
     let hint = tui.status_hint();
     assert!(
@@ -431,14 +430,14 @@ async fn g_key_on_plain_value_slot_does_not_open_gen_view() -> Result<()> {
     let app = make_app().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
 
-    // Open add form → add a field → Tab to plain value slot → press [g]
-    // [g] should type 'g' into the field, NOT open the generator.
+    // Open add form → add a field → Tab to plain value slot → press Alt-g
+    // Alt-g must not open the generator on a plain slot.
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('+'), KeyModifiers::NONE); // add field → key slot
+    tui.handle_key_with_modifiers(KeyCode::Char('n'), KeyModifiers::ALT); // add field → key slot
+    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → type slot
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → plain value slot
-
-    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::NONE); // should type 'g', not open gen
+    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // no gen on a plain slot
 
     let hint = tui.status_hint();
     assert!(
@@ -455,15 +454,14 @@ async fn esc_in_gen_view_returns_to_form() -> Result<()> {
 
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
-    tui.handle_key_with_modifiers(KeyCode::Char('+'), KeyModifiers::NONE); // add field → key slot
-    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → value
+    tui.handle_key_with_modifiers(KeyCode::Char('n'), KeyModifiers::ALT); // add field → key slot
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → type slot
-    tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE); // open dropdown
+    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // open dropdown
     tui.handle_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::NONE); // Username
     tui.handle_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::NONE); // Token
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // confirm selection
-    tui.handle_key_with_modifiers(KeyCode::BackTab, KeyModifiers::NONE); // → token slot
-    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::NONE); // open gen view
+    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → token slot
+    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // open gen view
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE); // cancel gen view
 
     let hint = tui.status_hint();
@@ -485,15 +483,14 @@ async fn accept_in_gen_view_injects_password_into_form() -> Result<()> {
     for c in "TestEntry".chars() {
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
-    tui.handle_key_with_modifiers(KeyCode::Char('+'), KeyModifiers::NONE); // add field → key slot
-    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → value
+    tui.handle_key_with_modifiers(KeyCode::Char('n'), KeyModifiers::ALT); // add field → key slot
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → type slot
-    tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE); // open dropdown
+    tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // open dropdown
     tui.handle_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::NONE); // Username
     tui.handle_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::NONE); // Token
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // confirm selection
-    tui.handle_key_with_modifiers(KeyCode::BackTab, KeyModifiers::NONE); // → token slot
-    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::NONE); // open gen view
+    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → token slot
+    tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // open gen view
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE); // accept
 
     // Back in form — confirm should produce a non-empty value

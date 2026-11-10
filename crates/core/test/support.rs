@@ -12,7 +12,7 @@ use crate::domain::{
     AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, Vault,
 };
 use crate::ports::KeychainStore;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[cfg(feature = "integration")]
@@ -21,21 +21,17 @@ use crate::error::Result;
 use crate::ports::VaultStore;
 
 /// In-memory keychain for testing. Never touches the OS keychain.
+///
+/// The handle is shared, so a test can keep one clone to flip the item and hand
+/// another to the code under test.
+#[derive(Clone, Default)]
 pub struct MockKeychain {
-    inner: Mutex<Option<String>>,
+    inner: Arc<Mutex<Option<String>>>,
 }
 
 impl MockKeychain {
     pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(None),
-        }
-    }
-}
-
-impl Default for MockKeychain {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -169,6 +165,76 @@ pub fn test_otp_entry(vault_id: Uuid, name: &str) -> Entry {
         )
     }
 }
+
+/// Unencrypted RSA OpenSSH private key, generated once offline with
+/// `ssh-keygen -t rsa -b 2048 -N '' -C 'rsa-fixture@example.com'`.
+///
+/// The daemon matrix does not serve RSA yet: this fixture pins "the PEM parses
+/// as RSA and the agent refuses it". Never generate key material at test
+/// runtime.
+pub const RSA_OPENSSH_PEM: &str = "-----BEGIN OPENSSH PRIVATE KEY-----\n\
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn\n\
+NhAAAAAwEAAQAAAQEA8c22C5JDPFgVBKSs+oq4gAASpeodt8GaTeQ5JnWZcHcdyxPEszvq\n\
+3iM75Xohyg/9T3t4cJY7mIzn/5U0USYhdWRTGSrXHSH0jR+8TfwW742eCGGCUjuMuzz8Fs\n\
+G8EjTzxiz7YiuxgnHPCBSLOK8zei41sSC7evCqMfXFvFgWUl9ONu0PBt5roFE6Vv5D46TO\n\
++vKyLqzj4ZWBEiolEoqrp15Geaqdi/tWHuOOE3jKvxyiUnOhf7tJ9mUhVRGdzYV2aoCmnT\n\
+BhNF/qda9SY7T0No0UYCFcN2+sYV9bD1Dak2e77QEhjiGbZlhcGAQtCFn1ze2oZuT1T4AD\n\
+xOBy37z2CwAAA9AeHvCIHh7wiAAAAAdzc2gtcnNhAAABAQDxzbYLkkM8WBUEpKz6iriAAB\n\
+Kl6h23wZpN5DkmdZlwdx3LE8SzO+reIzvleiHKD/1Pe3hwljuYjOf/lTRRJiF1ZFMZKtcd\n\
+IfSNH7xN/BbvjZ4IYYJSO4y7PPwWwbwSNPPGLPtiK7GCcc8IFIs4rzN6LjWxILt68Kox9c\n\
+W8WBZSX0427Q8G3mugUTpW/kPjpM768rIurOPhlYESKiUSiqunXkZ5qp2L+1Ye444TeMq/\n\
+HKJSc6F/u0n2ZSFVEZ3NhXZqgKadMGE0X+p1r1JjtPQ2jRRgIVw3b6xhX1sPUNqTZ7vtAS\n\
+GOIZtmWFwYBC0IWfXN7ahm5PVPgAPE4HLfvPYLAAAAAwEAAQAAAQA7BS+cpnBD3+oNbpaM\n\
+NuTu1VW36qujSR29SmoKsaSot2JtyZ728raSzv3VNtjdhcaaKnSM4pacVzRfhY82CX0cNs\n\
+czuumzwjB7a9YeINyGT0ZWHFrfcIqavzl24oXh2cvwwNUBMtIKmXXjroQG63jAp1vSpr8s\n\
+NGcOd8Nyg/u60fABIaZVA/fEV0DC5+8OVx+UiCEYd0SKEwaV5f87+aDCtPoFP5LtjFgAsJ\n\
+4kDpuJ/cjkcGOkA5tFpRTuyOEJXH0tXKjHr5ZhUlkyaFFFhjaHW+45EWp07MYkpK9x8gaR\n\
+nTA3Nt0ZOMvVhZHE002ssi99rcgh04Iq1/Atuv3p/c8pAAAAgQD7DRBO9qt0Nps1HKE8KC\n\
+OBYpo+fIiaguuaepfb5b7Y5zIjLQFiPWzE0yrXTuIobqsVKbw2z2e5jNHSvwvga/t7fYMU\n\
+uqBZ5b/r9GazUOlYbbeuSu8weh3Ler6u+REMBA+Iv6XQWktciWJYDjPWkUcLS3rCECiPWF\n\
+RiklzVajlfEQAAAIEA+/rPlx7cMqD3e/Y+BSej0V5Bnuip11iyPpvsQNWIQkEVcZdUNBwy\n\
+fP3nwhL+pX7LwnrL65hQIPgq5FCpt/FCdx5EZoVxET2ZiooMuBJ9qR/wHf0Ejg/E6MbJ1U\n\
+lRguquK/DwB0Tbe58W4+ERP+lOO1bororcKwNErQQaf0KssBMAAACBAPWpVidDEmG0lwLt\n\
+J5BzrmHCbr8qYlFWF3HJExaLt4L1tD5R0QD85B4ICD4IMeFSon59UaBfcN5pqU0orDxW53\n\
+Tk1t+432gEyEVTl/tLAcLA2+kxOjYZqQjcPb3vhNwBe/GVYxdzxdz5gh58FTjFE40Uxw++\n\
+GPhJRPsK0ZeDfpEpAAAAF3JzYS1maXh0dXJlQGV4YW1wbGUuY29tAQID\n\
+-----END OPENSSH PRIVATE KEY-----\n";
+
+/// Unencrypted ECDSA P-256 OpenSSH private key, generated once offline with
+/// `ssh-keygen -t ecdsa -b 256 -N '' -C 'ecdsa-fixture@example.com'`.
+///
+/// The agent serves Ed25519 and RSA only: this fixture pins "the PEM parses and
+/// the support matrix refuses the algorithm". Never generate key material at
+/// test runtime.
+pub const ECDSA_OPENSSH_PEM: &str = "-----BEGIN OPENSSH PRIVATE KEY-----\n\
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n\
+1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQQs3oK6qBQDNiXjrU1HXt/gocLnqpg0\n\
+O3vdQW1hXPZsGQd4n39GmxtkvsocBw9UKKEzaN4zCk8pAAvkF63l7hraAAAAuNwaKK3cGi\n\
+itAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBCzegrqoFAM2JeOt\n\
+TUde3+ChwueqmDQ7e91BbWFc9mwZB3iff0abG2S+yhwHD1QooTNo3jMKTykAC+QXreXuGt\n\
+oAAAAgHds7kNkx0nsEpL0CoZ3FYb9FVReVvCCClbqpKPfc0YYAAAAZZWNkc2EtZml4dHVy\n\
+ZUBleGFtcGxlLmNvbQECAwQFBgc=\n\
+-----END OPENSSH PRIVATE KEY-----\n";
+
+/// An age-encrypted file blob shaped like the values that once reached
+/// `SshPrivateKey` fields (live rows decoded to `age-encryption.org/v1`).
+///
+/// Age files are ciphertext, not OpenSSH keys: no library converts them into a
+/// private key. This fixture pins "the doors refuse a value that is not an
+/// OpenSSH PEM". It never decrypts.
+pub const AGE_ENCRYPTED_FILE: &str = "-----BEGIN AGE ENCRYPTED FILE-----\n\
+age-encryption.org/v1\n\
+-> X25519 1sVJx0n4YQmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy\n\
+7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np\n\
+4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8W\n\
+m6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5\n\
+Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9\n\
+Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk\n\
+2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq\n\
+7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZ\n\
+t3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy7QmT\n\
+--- 1sVJx0n4YQmT0bGZt3Vq7Yk2f9Ld5Rc8Wm6Np4Ks1Xy\n\
+-----END AGE ENCRYPTED FILE-----\n";
 
 /// Insert a minimal vault row so FK constraints pass in tests.
 ///

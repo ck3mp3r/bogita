@@ -193,14 +193,14 @@ async fn esc_unchanged_form_cancels_without_prompt() -> Result<()> {
     // So we just verify we're not in Form anymore.
     let hint = tui.status_hint();
     assert!(
-        hint.contains("[s] save"),
+        hint.contains("[s/Enter] save"),
         "unchanged edit form Esc should go to ConfirmSave, got: {hint}"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn esc_dirty_form_shows_discard_modal() -> Result<()> {
+async fn esc_dirty_edit_form_shows_save_and_discard_modal() -> Result<()> {
     let app = make_app_with_entry().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
 
@@ -211,12 +211,12 @@ async fn esc_dirty_form_shows_discard_modal() -> Result<()> {
     for c in "x".chars() {
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
-    // Press Esc — dirty form should show ConfirmDiscard
+    // Esc on a dirty edit form opens the save/discard modal
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
     let hint = tui.status_hint();
     assert!(
-        hint.contains("[d] discard"),
-        "dirty form Esc should show discard modal, got: {hint}"
+        hint.contains("[s/Enter] save") && hint.contains("[d] discard"),
+        "dirty edit form Esc should offer save and discard, got: {hint}"
     );
     Ok(())
 }
@@ -233,7 +233,7 @@ async fn confirm_discard_closes_form() -> Result<()> {
     for c in "x".chars() {
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
-    // Press Esc → ConfirmDiscard
+    // Press Esc → save/discard modal
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
     // Press d to confirm discard
     tui.handle_key_with_modifiers(KeyCode::Char('d'), KeyModifiers::NONE);
@@ -257,7 +257,7 @@ async fn cancel_discard_returns_to_form() -> Result<()> {
     for c in "x".chars() {
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
-    // Press Esc → ConfirmDiscard
+    // Press Esc → save/discard modal
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
     // Press b to cancel discard
     tui.handle_key_with_modifiers(KeyCode::Char('b'), KeyModifiers::NONE);
@@ -281,9 +281,9 @@ async fn esc_in_discard_modal_returns_to_form() -> Result<()> {
     for c in "x".chars() {
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
-    // Press Esc → ConfirmDiscard
+    // Press Esc → save/discard modal
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
-    // Press Esc again to cancel discard
+    // Press Esc again to go back to the form
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
     let hint = tui.status_hint();
     assert!(

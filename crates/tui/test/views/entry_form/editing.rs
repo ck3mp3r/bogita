@@ -72,16 +72,16 @@ fn enter_with_valid_name_returns_confirm() {
 // ── add / remove fields ───────────────────────────────────────────────────────
 
 #[test]
-fn plus_key_adds_a_field() {
+fn alt_n_adds_a_field() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     assert_eq!(form.field_count(), 1);
 }
 
 #[test]
-fn plus_key_focuses_new_field_key_slot() {
+fn alt_n_focuses_new_field_key_slot() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     // first field key slot = 1
     assert_eq!(form.focused_field(), 1);
 }
@@ -89,26 +89,50 @@ fn plus_key_focuses_new_field_key_slot() {
 #[test]
 fn adding_two_fields_gives_field_count_two() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
+    add_field(&mut form);
     assert_eq!(form.field_count(), 2);
 }
 
 #[test]
-fn minus_key_removes_focused_field() {
+fn alt_d_removes_focused_field() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     // focused on key slot of field 0
-    form.handle_key(KeyCode::Char('-'));
+    remove_field(&mut form);
     assert_eq!(form.field_count(), 0);
 }
 
 #[test]
-fn minus_key_on_name_slot_does_nothing() {
+fn alt_d_on_name_slot_does_nothing() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('-'));
+    remove_field(&mut form);
     assert_eq!(form.name(), "GitHub");
     assert_eq!(form.field_count(), 0);
+}
+
+#[test]
+fn plus_and_minus_type_into_the_name() {
+    let mut form = add_form_named("GitHub");
+    form.handle_key(KeyCode::Char('+'));
+    form.handle_key(KeyCode::Char('-'));
+    assert_eq!(form.name(), "GitHub+-");
+    assert_eq!(form.field_count(), 0);
+}
+
+#[test]
+fn space_types_into_the_name() {
+    let mut form = add_form_named("GitHub");
+    form.handle_key(KeyCode::Char(' '));
+    assert_eq!(form.name(), "GitHub ");
+}
+
+#[test]
+fn bare_g_types_into_the_key_slot() {
+    let mut form = add_form_named("GitHub");
+    add_field(&mut form);
+    form.handle_key(KeyCode::Char('g'));
+    assert_eq!(form.fields[0].key_state.text(), "g");
 }
 
 // ── navigation ────────────────────────────────────────────────────────────────
@@ -116,33 +140,40 @@ fn minus_key_on_name_slot_does_nothing() {
 #[test]
 fn tab_moves_from_name_to_first_field_key() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    // '+' already moves focus to key slot 1; go back to name first
-    // Re-create fresh
-    let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    // focused=1 (key); Tab → value(2)
+    add_field(&mut form);
+    // Alt-n already moves focus to key slot 1; go back to name first
+    form.handle_key(KeyCode::BackTab);
+    assert_eq!(form.focused_field(), 0);
+    // Tab from the name slot lands on the key slot of the first field.
     form.handle_key(KeyCode::Tab);
-    assert_eq!(form.focused_field(), 2);
+    assert_eq!(form.focused_field(), 1);
 }
 
 #[test]
-fn tab_moves_from_value_to_type() {
+fn tab_moves_from_key_to_type() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Tab); // key(1) → value(2)
-    form.handle_key(KeyCode::Tab); // value(2) → type(3)
+    add_field(&mut form);
+    form.handle_key(KeyCode::Tab); // key(1) → type(3)
     assert_eq!(form.focused_field(), 3);
+}
+
+#[test]
+fn tab_moves_from_type_to_value() {
+    let mut form = add_form_named("GitHub");
+    add_field(&mut form);
+    form.handle_key(KeyCode::Tab); // key(1) → type(3)
+    form.handle_key(KeyCode::Tab); // type(3) → value(2)
+    assert_eq!(form.focused_field(), 2);
 }
 
 #[test]
 fn tab_wraps_to_name_after_last_slot() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    // slots: 0=name, 1=key, 2=value, 3=type → 4 total
-    form.handle_key(KeyCode::Tab); // 1→2
-    form.handle_key(KeyCode::Tab); // 2→3
-    form.handle_key(KeyCode::Tab); // 3→0
+    add_field(&mut form);
+    // slots: 0=name, 1=key, 3=type, 2=value → 4 total
+    form.handle_key(KeyCode::Tab); // 1→3
+    form.handle_key(KeyCode::Tab); // 3→2
+    form.handle_key(KeyCode::Tab); // 2→0
     assert_eq!(form.focused_field(), 0);
 }
 
@@ -163,7 +194,7 @@ fn add_mode_dirty_when_name_entered() {
 #[test]
 fn add_mode_dirty_when_field_added() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     assert!(form.is_dirty());
 }
 
@@ -258,6 +289,7 @@ fn edit_mode_dirty_when_field_value_changed() {
     let mut form = EntryForm::new_edit(&entry);
     // Tab to value slot and change the value
     form.handle_key(KeyCode::Tab); // → key
+    form.handle_key(KeyCode::Tab); // → type
     form.handle_key(KeyCode::Tab); // → value
                                    // Clear "s3cret" and type new value
     for _ in 0.."s3cret".len() {
@@ -292,7 +324,7 @@ fn edit_mode_dirty_when_field_added() {
         modified_at: Utc::now().timestamp(),
     };
     let mut form = EntryForm::new_edit(&entry);
-    form.handle_key(KeyCode::Char('+')); // add a field
+    add_field(&mut form); // add a field
     assert!(form.is_dirty());
 }
 
@@ -321,7 +353,7 @@ fn edit_mode_dirty_when_field_removed() {
     let mut form = EntryForm::new_edit(&entry);
     // Tab to key slot then remove the field
     form.handle_key(KeyCode::Tab); // → key
-    form.handle_key(KeyCode::Char('-')); // remove field
+    remove_field(&mut form); // remove field
     assert!(form.is_dirty());
 }
 

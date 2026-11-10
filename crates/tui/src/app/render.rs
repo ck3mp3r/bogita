@@ -1,16 +1,17 @@
 //! Frame rendering — layout, view dispatch, and status chrome.
 
+use super::bindings;
 use super::modals::{
     centered_rect, render_confirm_delete_modal, render_confirm_delete_vault_modal,
     render_confirm_discard_modal, render_confirm_save_modal, render_error_modal,
     render_form_vault_picker, render_lock_screen,
 };
 use super::tui::{ActiveView, MessageKind, Tui};
-use crate::views::entry_form::SlotKind;
 use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use std::time::Duration;
 
@@ -141,6 +142,10 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             render_error_modal(frame, body_area, msg);
         }
 
+        if self.help.is_some() {
+            self.render_help_overlay(frame, body_area);
+        }
+
         // Status bar — show active status message or context hint
         let status_text = if let Some((msg, created_at)) = &self.status_message {
             if created_at.elapsed() < Duration::from_secs(3) {
@@ -166,19 +171,29 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         );
     }
 
-    /// One-line status bar hint text, context-aware.
+    /// One-line status bar hint text, generated from the binding tables.
     pub fn status_hint(&self) -> String {
+        use bindings::Surface;
         if self.error_message.is_some() {
-            return "[Esc / Enter] dismiss".to_string();
+            return bindings::surface_hint(Surface::ErrorOverlay);
+        }
+        if self.help.is_some() {
+            return bindings::titled(bindings::title(Surface::Help), bindings::HELP);
         }
         match &self.active {
-            ActiveView::ConfirmDelete { .. } => "[d] delete  [c/Esc] cancel".to_string(),
-            ActiveView::ConfirmDeleteVault { .. } => "[d] delete  [c/Esc] cancel".to_string(),
-            ActiveView::ConfirmSave { .. } => {
-                "[s] save  [d] discard  [Esc] back to form".to_string()
+            ActiveView::ConfirmDelete { .. } | ActiveView::ConfirmDeleteVault { .. } => {
+                bindings::surface_hint(Surface::ConfirmDelete)
             }
-            ActiveView::ConfirmDiscard { .. } => "[d] discard  [b/Esc] back to form".to_string(),
+            ActiveView::ConfirmSave { .. } => bindings::surface_hint(Surface::ConfirmSave),
+            ActiveView::ConfirmDiscard { .. } => bindings::surface_hint(Surface::ConfirmDiscard),
             ActiveView::Form(f) => {
+                let hint = bindings::form_hint(
+                    &f.focused_slot(),
+                    f.focused_field(),
+                    f.field_count(),
+                    f.field_badge((f.focused_field().saturating_sub(1)) / 3),
+                    f.focused_field_is_obscured(),
+                );
                 let dirty_suffix = if f.is_dirty() {
                     "  ·  unsaved changes"
                 } else {
@@ -189,73 +204,101 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                 } else {
                     String::new()
                 };
-                match f.focused_slot() {
-                    SlotKind::Name => {
-                        format!("Editing name  ·  [Tab] next field  [Enter] save  [Esc] cancel{dirty_suffix}{validation_warning}")
-                    }
-                    SlotKind::Key(_) => {
-                        let n = (f.focused_field().saturating_sub(1)) / 3 + 1;
-                        let m = f.field_count();
-                        format!("Editing key (field {n} of {m})  ·  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}")
-                    }
-                    SlotKind::Value(_) if f.focused_field_is_obscured() => {
-                        format!("Editing token  ·  [g] generate  [Ctrl-r] toggle reveal  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}")
-                    }
-                    SlotKind::Value(_) => format!("Editing value  ·  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}"),
-                    SlotKind::Type(_) => {
-                        let badge = f.field_badge((f.focused_field().saturating_sub(1)) / 3);
-                        format!(
-                            "[j/k] select type  ·  currently: {badge}  ·  [Enter] save  [Tab] next  [Esc] cancel{dirty_suffix}{validation_warning}"
-                        )
-                    }
-                }
+                format!("{hint}{dirty_suffix}{validation_warning}")
             }
             ActiveView::Main => {
                 if self.main_view.is_vault_picker_open() {
-                    return "[j/k] select  [a] add vault  [d] delete vault  [Enter] confirm  [Esc] close".to_string();
+                    return bindings::surface_hint(Surface::MainVaultPicker);
                 }
                 if self.main_view.is_leader_mode() {
                     use crate::views::main_view::Column;
-                    match self.main_view.focused {
-                        Column::Entries => {
-                            "[a] add  [e] edit  [d] delete  [Esc] cancel".to_string()
-                        }
-                        Column::Detail => "[Esc] cancel".to_string(),
-                    }
+                    return match self.main_view.focused {
+                        Column::Entries => bindings::surface_hint(Surface::MainLeaderEntries),
+                        Column::Detail => bindings::surface_hint(Surface::MainLeaderDetail),
+                    };
+                }
+                if self.main_view.is_searching() {
+                    return bindings::surface_hint(Surface::Search);
+                }
+                use crate::views::main_view::Column;
+                if self.main_view.focused == Column::Detail {
+                    bindings::surface_hint(Surface::MainDetail)
                 } else {
-                    use crate::views::main_view::Column;
-                    if self.main_view.focused == Column::Detail {
-                        "[j/k] scroll  [s] reveal  [c] copy  [Tab] columns  [v] vault  [Space] actions  [q] quit".to_string()
-                    } else {
-                        "[/] search  [v] vault  [Space] actions  [j/k] scroll  [Tab] focus  [q] quit"
-                            .to_string()
-                    }
+                    bindings::surface_hint(Surface::MainEntries)
                 }
             }
-            ActiveView::PasswordGen { .. } => {
-                "[g] regenerate  [a] accept  [Esc] cancel  [+/-] length  [u/l/d/s/x] charset"
-                    .to_string()
-            }
-            ActiveView::FormVaultPicker { .. } => {
-                "[j/k] select  [a] add vault  [Enter] confirm  [Esc] close".to_string()
-            }
-            ActiveView::VaultForm(f) => {
-                if f.is_name_focused() {
-                    "Editing vault name  ·  [Tab] toggle default  [Enter] create  [Esc] cancel"
-                        .to_string()
-                } else {
-                    "[Space] toggle default  [Tab] back to name  [Enter] create  [Esc] cancel"
-                        .to_string()
-                }
-            }
-            ActiveView::Locked { error, .. } => {
-                if error.is_some() {
-                    "Wrong passphrase. Try again.  [Esc] quit".to_string()
-                } else {
-                    "Enter passphrase to unlock  [Esc] quit".to_string()
-                }
-            }
+            ActiveView::PasswordGen { .. } => bindings::surface_hint(Surface::PasswordGen),
+            ActiveView::FormVaultPicker { .. } => bindings::surface_hint(Surface::FormVaultPicker),
+            ActiveView::VaultForm(f) => bindings::vault_form_hint(f.is_name_focused()),
+            ActiveView::Locked { error, .. } => bindings::locked_hint(error.is_some()),
         }
+    }
+
+    /// The surface whose keys the help overlay should list.
+    ///
+    /// `None` means the whole registry — the Main view has no single table.
+    fn help_surface(&self) -> Option<bindings::Surface> {
+        use bindings::Surface;
+        match &self.active {
+            ActiveView::Main => None,
+            ActiveView::ConfirmSave { .. } => Some(Surface::ConfirmSave),
+            ActiveView::ConfirmDiscard { .. } => Some(Surface::ConfirmDiscard),
+            ActiveView::ConfirmDelete { .. } | ActiveView::ConfirmDeleteVault { .. } => {
+                Some(Surface::ConfirmDelete)
+            }
+            ActiveView::Form(f) => Some(bindings::form_surface(
+                &f.focused_slot(),
+                f.focused_field_is_obscured(),
+            )),
+            ActiveView::PasswordGen { .. } => Some(Surface::PasswordGen),
+            ActiveView::FormVaultPicker { .. } => Some(Surface::FormVaultPicker),
+            ActiveView::VaultForm(f) => Some(if f.is_name_focused() {
+                Surface::VaultFormName
+            } else {
+                Surface::VaultFormCheckbox
+            }),
+            ActiveView::Locked { error, .. } => Some(if error.is_some() {
+                Surface::LockedError
+            } else {
+                Surface::Locked
+            }),
+        }
+    }
+
+    /// The `?` keybindings overlay: every key of the focused surface, or the
+    /// whole registry on Main. `j`/`k` scroll; `?`/Esc/`q` close.
+    fn render_help_overlay(&self, frame: &mut Frame, area: Rect) {
+        let modal = centered_rect(80, 80, area);
+        frame.render_widget(Clear, modal);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(Line::from(" Keybindings "));
+        let inner = block.inner(modal);
+        frame.render_widget(block, modal);
+
+        let sections = match self.help_surface() {
+            Some(surface) => vec![(bindings::title(surface), bindings::table(surface))],
+            None => bindings::registry(),
+        };
+        let mut lines: Vec<Line> = Vec::new();
+        for (title, table) in sections {
+            lines.push(Line::from(Span::styled(
+                title.to_string(),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(format!("  {}", bindings::hint(table))));
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((self.help.unwrap_or(0), 0)),
+            inner,
+        );
     }
 
     /// One-line header text: app name · entry count.

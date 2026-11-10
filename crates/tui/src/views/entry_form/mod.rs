@@ -3,7 +3,7 @@
 //! ## Focus system
 //!
 //! Focus is managed by **rat-focus** `FocusFlags` — one flag per slot:
-//! name, key, value, and type for each user-defined field.
+//! name, key, type, and value for each user-defined field.
 //!
 //! Tab / BackTab navigation uses `Focus::next_force` / `Focus::prev_force`
 //! to cycle through all slots without delegating the key event to the focused
@@ -23,10 +23,12 @@
 //!
 //! ## Form-level keys
 //!
-//! `Enter` always confirms (with validation) regardless of which slot is focused.
+//! `Enter` confirms (with validation) from a text slot and opens the type dropdown from a type slot.
 //! `Esc` always cancels the form.
 //! On a type slot, `j`/`k`/`Up`/`Down` navigate the selector and open the popup; the type is applied when the popup closes.
-//! `+` / `-` add / remove fields (available from any slot on the name row or key/type slots).
+//! `Alt-n` / `Alt-d` add / remove fields from any field slot; `Alt-g`, `Alt-r`, `Alt-v` and `Alt-t`
+//! are the remaining management chords. Unmodified printable keys and Space always belong to the
+//! focused input.
 
 // region:    --- Modules
 
@@ -44,11 +46,17 @@ pub use form::EntryForm;
 
 // region:    --- Tests
 #[cfg(test)]
+#[path = "../../../test/views/entry_form/boolean_row.rs"]
+mod entry_form_boolean_row_test;
+#[cfg(test)]
 #[path = "../../../test/views/entry_form/cursor.rs"]
 mod entry_form_cursor_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/editing.rs"]
 mod entry_form_editing_test;
+#[cfg(test)]
+#[path = "../../../test/views/entry_form/layout.rs"]
+mod entry_form_layout_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/mapping_and_labels.rs"]
 mod entry_form_mapping_and_labels_test;
@@ -58,6 +66,15 @@ mod entry_form_notes_scroll_validation_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/reveal_and_types.rs"]
 mod entry_form_reveal_and_types_test;
+#[cfg(test)]
+#[path = "../../../test/views/entry_form/save_chord.rs"]
+mod entry_form_save_chord_test;
+#[cfg(test)]
+#[path = "../../../test/views/entry_form/ssh_key_confirm.rs"]
+mod entry_form_ssh_key_confirm_test;
+#[cfg(test)]
+#[path = "../../../test/views/entry_form/validation.rs"]
+mod entry_form_validation_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/support.rs"]
 mod support;

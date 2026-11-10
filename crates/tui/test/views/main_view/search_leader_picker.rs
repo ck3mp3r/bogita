@@ -1,6 +1,6 @@
 use crate::views::main_view::{MainView, MainViewAction};
 use bogita_core::domain::EntryType;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::support::*;
 
@@ -28,6 +28,34 @@ fn typing_in_search_mode_builds_query() {
     view.handle_key(KeyCode::Char('i'));
     view.handle_key(KeyCode::Char('t'));
     assert_eq!(view.search_query(), "git");
+}
+
+#[test]
+fn modified_chars_are_ignored_in_search_query() {
+    // -- Setup & Fixtures
+    let mut view = MainView::new(vec![], vec![]);
+    view.handle_key(KeyCode::Char('/'));
+
+    // -- Exec
+    view.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::NONE);
+    view.handle_key_with_modifiers(KeyCode::Char('x'), KeyModifiers::CONTROL);
+    view.handle_key_with_modifiers(KeyCode::Char('y'), KeyModifiers::ALT);
+
+    // -- Check
+    assert_eq!(view.search_query(), "g");
+}
+
+#[test]
+fn shifted_char_is_inserted_in_search_query() {
+    // -- Setup & Fixtures
+    let mut view = MainView::new(vec![], vec![]);
+    view.handle_key(KeyCode::Char('/'));
+
+    // -- Exec
+    view.handle_key_with_modifiers(KeyCode::Char('G'), KeyModifiers::SHIFT);
+
+    // -- Check
+    assert_eq!(view.search_query(), "g");
 }
 
 #[test]

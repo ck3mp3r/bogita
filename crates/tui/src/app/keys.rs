@@ -3,6 +3,7 @@
 use super::actions::{AppAction, PendingCopy};
 use super::tui::{ActiveView, MessageKind, RunState, Tui};
 use crate::views::entry_form::{EntryForm, FormAction, FormMode, SlotKind};
+use crate::views::inserts_text;
 use crate::views::main_view::MainViewAction;
 use crate::views::password_gen_view::{PasswordGenAction, PasswordGenView};
 use crate::views::vault_form::{VaultForm, VaultFormAction};
@@ -31,8 +32,15 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
     }
 
     /// Handle a key press with full modifier info.
-    /// Used by the event loop to pass Ctrl-r to the form.
+    /// Used by the event loop to pass the Alt management chords to the form.
     pub(crate) fn handle_key_with_modifiers(&mut self, key: KeyCode, modifiers: KeyModifiers) {
+        // Ctrl-C: quit. Raw mode turns the interrupt into a key event, so this
+        // is the only place SIGINT-by-keyboard reaches us.
+        if key == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {
+            self.state = RunState::Quit;
+            return;
+        }
+
         // Ctrl-L: lock the vault (only from Main view, not locked)
         if key == KeyCode::Char('l') && modifiers == KeyModifiers::CONTROL {
             if !self.app.is_locked {
@@ -46,13 +54,30 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             return;
         }
 
+        // `?` toggles the keybindings overlay from every surface. While it is
+        // open it owns the keyboard: `j`/`k` scroll, `?`/Esc/`q` close.
+        if key == KeyCode::Char('?') && inserts_text(modifiers) {
+            self.help = self.help.map_or(Some(0), |_| None);
+            return;
+        }
+        if let Some(scroll) = self.help {
+            self.help = match key {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => None,
+                KeyCode::Char('j') | KeyCode::Down => Some(scroll.saturating_add(1)),
+                KeyCode::Char('k') | KeyCode::Up => Some(scroll.saturating_sub(1)),
+                _ => Some(scroll),
+            };
+            return;
+        }
+
         match &mut self.active {
             ActiveView::Form(f) => {
-                // [g] on a token slot (obscured value) opens the password generator.
+                // [Alt-g] on a token slot (obscured value) opens the password generator.
                 if key == KeyCode::Char('g')
-                    && modifiers.is_empty()
+                    && modifiers == KeyModifiers::ALT
                     && matches!(f.focused_slot(), SlotKind::Value(_))
                     && f.focused_field_is_obscured()
+                    && !f.is_ssh_key()
                 {
                     let placeholder = EntryForm::new_add(None);
                     let form = std::mem::replace(f, placeholder);
@@ -165,7 +190,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                 }
             }
             _ => {
-                self.handle_key(key);
+                self.handle_key_inner(key, modifiers);
             }
         }
     }
@@ -176,6 +201,14 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
     /// Async mutations are deferred to `self.pending`; call `flush_pending`
     /// afterwards to drain them.
     pub fn handle_key(&mut self, key: KeyCode) -> RunState {
+        self.handle_key_inner(key, KeyModifiers::NONE)
+    }
+
+    /// Handle a key press with its modifiers.
+    ///
+    /// The lock screen and the vault form insert only unmodified printable
+    /// chars, so a Ctrl or Alt chord never lands in a text field.
+    fn handle_key_inner(&mut self, key: KeyCode, modifiers: KeyModifiers) -> RunState {
         // Error overlay: [Esc] or [Enter] dismisses; any other key is swallowed.
         if self.dismiss_error_overlay(key) {
             return self.state.clone();
@@ -186,7 +219,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
                     self.state = RunState::Quit;
                 }
-                other => match self.main_view.handle_key(other) {
+                other => match self.main_view.handle_key_with_modifiers(other, modifiers) {
                     MainViewAction::None => {}
                     MainViewAction::OpenAddForm { vault_id } => {
                         let vault_name = self
@@ -276,7 +309,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     unreachable!()
                 };
                 match key {
-                    KeyCode::Char('s') | KeyCode::Char('S') => {
+                    KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Enter => {
                         // Confirm: re-run confirm() to get the entry and save.
                         if let FormAction::Confirm(entry) = form.confirm() {
                             let select_id = entry.id;
@@ -292,7 +325,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         // Discard changes — go to Main without saving.
                         // self.active already set to Main above
                     }
-                    KeyCode::Esc => {
+                    KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc => {
                         // Back to form with edits intact.
                         self.active = ActiveView::Form(form);
                     }
@@ -314,7 +347,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         // Discard changes — go to Main without saving.
                         // self.active already set to Main above
                     }
-                    KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc => {
+                    KeyCode::Char('b') | KeyCode::Char('B') | KeyCode::Esc | KeyCode::Enter => {
                         // Back to form with edits intact.
                         self.active = ActiveView::Form(form);
                     }
@@ -351,7 +384,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                 }
                 _ => {}
             },
-            ActiveView::VaultForm(form) => match form.handle_key(key) {
+            ActiveView::VaultForm(form) => match form.handle_key_with_modifiers(key, modifiers) {
                 VaultFormAction::Confirm(mut vault) => {
                     match &self.app.identity {
                         Some(identity) => {
@@ -395,7 +428,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                             }
                         }
                     }
-                    KeyCode::Char(c) => {
+                    KeyCode::Char(c) if inserts_text(modifiers) => {
                         passphrase_input.set_text(format!("{}{}", passphrase_input.text(), c));
                     }
                     KeyCode::Backspace => {

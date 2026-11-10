@@ -2,6 +2,7 @@ use crate::app::{wrap_text, Tui};
 use crate::context::TuiContext;
 use bogita_core::test_support::test_vault;
 use ratatui::backend::TestBackend;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::Terminal;
 
 use super::support::*;
@@ -76,6 +77,26 @@ async fn add_entry_context_renders_named_vault() -> Result<()> {
     assert!(
         rendered.contains("Vault: testvault"),
         "add form should show the requested vault, rendered: {rendered}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn vault_form_checkbox_hint_advertises_alt_t() -> Result<()> {
+    // -- Setup & Fixtures
+    let app = make_app().await?;
+    let mut tui = Tui::new(app, TuiContext::Default).await?;
+
+    // -- Exec: vault picker → add vault → Tab to the checkbox cell.
+    tui.handle_key_with_modifiers(KeyCode::Char('v'), KeyModifiers::NONE);
+    tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
+    tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE);
+
+    // -- Check
+    let hint = tui.status_hint();
+    assert!(
+        hint.contains("[Alt-t] toggle default"),
+        "the checkbox cell must advertise Alt-t, got: {hint}"
     );
     Ok(())
 }

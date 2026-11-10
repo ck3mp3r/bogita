@@ -53,10 +53,103 @@ release-with-debug build runs production state by design, not as a dev build.
   `crates/core/src/storage/config.rs:10-21` and its keychain service from the gate in
   `crates/core/src/storage/keychain.rs:15-18`. Never hardcode `bogita` or `bogita-dev` elsewhere.
 
-The agent socket is the cautionary precedent: it never passed through the gate, turned out to be
-dead stub wiring, and was deleted in commit 72ca50f - the dispatch stub survives at
-`crates/main/src/main.rs:84` (`Dispatch::Stub`, resolved by `not_implemented()` at
-`crates/main/src/main.rs:27`) and the `socket` argument at `crates/cli/src/args.rs:115`.
+The agent socket is the cautionary precedent: a first version never passed through the gate, was
+dead stub wiring, and was deleted in commit 72ca50f. The reinstated socket derives its path from
+the gated consts (`crates/core/src/agent/socket.rs`, `default_socket_path`).
+
+### SSH Agent Lock Interlock
+
+The daemon reads the staged age identity and nothing else: it never stages the item and never
+deletes it. It polls the item every 500 ms (`POLL_INTERVAL` in
+`crates/core/src/agent/watcher.rs`) and derives lock state from presence alone. Unlock writes the
+item (TUI, `bogita unlock`), lock deletes it (`bogita lock`, the TUI auto-lock at its own timeout,
+and every TUI exit — quit keys, Ctrl-C, SIGINT/SIGHUP/SIGTERM).
+
+- Item present: the key ring is rebuilt from the vault. Re-population on unlock is deliberate. The
+  staged identity is already the unlocked-state exposure, so reading it adds no surface, and
+  refusing to re-populate would leave the agent dead after every unlock.
+- Item absent: the ring is cleared and rebuilds are refused. Subsequent requests answer FAILURE(5).
+- `lock_timeout = Some(n)`: the ring is evicted after `n` seconds without a served request. The cap
+  is defeat-proof against request-driven re-population: rebuilds stay refused until the watcher
+  observes the full cycle (item absent, then present again), so a request alone cannot revive an
+  evicted ring. `lock_timeout = None` never evicts on idleness.
+- A request that already holds the ring finishes and returns its signature. Requests that arrive
+  after eviction answer FAILURE(5). Detection is at most one poll interval late.
+- `grep -rn "store_identity\|delete_identity" crates/core/src/agent/` must stay empty.
+
+## SSH Agent daemon
+
+Bogita serves SSH keys held in the vault over its own RFC 9987 unix-socket daemon. Keys are
+never exported: IDENTITIES_ANSWER carries public blobs only, and the daemon answers list
+and sign requests from an in-memory ring built at unlock time.
+
+- Code: `crates/core/src/agent/` holds nine files: `mod.rs` (exports), `client.rs`
+  (blocking control-channel and identity-list client), `control.rs` (control-extension
+  names, status payload, stop-and-drain handle), `error.rs` (`SshAgentError`), `keyring.rs`
+  (unlock-time cache, zeroize on drop, signing), `server.rs` (serve loop, frame cap, peer
+  gate, control extensions, termination watch), `signals.rs` (SIGINT and SIGHUP handlers
+  that raise the stop flag), `socket.rs` (path derivation, 0700/0600 hardening, the parent
+  heal of a too-open data dir, the peer-uid gate), `watcher.rs` (keychain-presence lock
+  watcher). CLI:
+  `crates/cli/src/handlers/agent.rs` holds the four lifecycle commands and the detached
+  spawn; `crates/main/src/main.rs` holds the hidden `--internal` child entry point, the
+  git-helper intercept, and the dispatch to the CLI handlers. The SIGINT/SIGHUP mapping
+  does not live in `main.rs`: `signals.rs` installs the handlers and `watch_termination`
+  in `server.rs` maps the flag onto the stop path, both started by `serve_with_signals`,
+  which the child calls.
+- Deep dive: the c5t research notes under 42e9c530 (tagged `ssh-agent`).
+- Algorithm support matrix — serve: Ed25519 and RSA (rsa-sha2-256/512); ECDSA unsupported — roadmap.
+  `algorithm_supported` in `crates/core/src/agent/keyring.rs` owns the matrix, and
+  `ALGORITHM_MATRIX` beside it is the sentence README and AGENTS quote. `bogita entry serve
+  <name> --on` refuses an off-matrix key at opt-in and prints the entry, the algorithm, and
+  the matrix. `load_entries` skips an off-matrix key that another client opted in, and its
+  warning names the entry and the algorithm. Skips are never silent.
+- RSA contract: rsa-sha2-256 and rsa-sha2-512 only; plain `ssh-rsa` (SHA-1) will never be
+  supported, because OpenSSH removed it and bogita offers no legacy fallback.
+- RSA signing: `KeyRing::sign` dispatches per algorithm. The RSA arm maps the SIGN_REQUEST
+  flags with `rsa_hash_alg` (`0x4` ⇒ rsa-sha2-512, everything else ⇒ rsa-sha2-256) and signs
+  through `rsa::pkcs1v15::SigningKey`, because `ssh-key` 0.6.7 has no hash-parameterized RSA
+  signer and its own conversion passes `[p, p]` as the primes, which fails validation.
+  `ssh-key` is built with the `ed25519` and `rsa` features; `bogita entry keygen` stays
+  Ed25519-only.
+
+Wire surface, as shipped (`ssh-agent-lib` 0.6 decodes exactly these numbers):
+
+| Message | Reply |
+| --- | --- |
+| REQUEST_IDENTITIES (11) | IDENTITIES_ANSWER (12): one public blob plus comment per served key |
+| SIGN_REQUEST (13) | SIGN_RESPONSE (14); FAILURE (5) while locked or when the key is not cached |
+| EXTENSION (27) `bogita-status@bogita` | EXTENSION_RESPONSE (29) with `<N> keys, <locked\|unlocked>` |
+| EXTENSION (27) `bogita-stop@bogita` | SUCCESS (6), then a bounded drain and socket unlink |
+| any other EXTENSION (27) name | EXTENSION_FAILURE (28) |
+| any other decodable number (17-23, 25, 26) | FAILURE (5) |
+
+A number the codec cannot decode closes the connection without a reply: that is the
+library's decode-time behaviour, not a handler decision.
+
+G2 (external state): the socket path is `default_socket_path()` =
+`$XDG_DATA_HOME/bogita[-dev]/agent.sock`, derived from the `APP_NAME` gate at
+`crates/core/src/storage/config.rs:18-22`. Debug builds serve a `-dev` socket only; never
+hardcode the path. `--socket <path>` is an explicit operator override on `agent start`;
+`stop`, `status` and `keys` always use the derived path.
+
+Lock and timeout semantics: see SSH Agent Lock Interlock above. In one line each: lock
+clears the ring and every later request answers FAILURE (5); unlock rebuilds the ring from
+the vault; `lock_timeout = Some(n)` evicts after `n` idle seconds and refuses rebuilds
+until the watcher observes the full absent-then-present cycle.
+
+Git signing helper (S7): `bogita` doubles as git's `gpg.ssh.program`. The binary answers
+git's `-Y` argument line before clap, signs with the vault key that matches the requested
+public key, and forwards every verify shape to the system `ssh-keygen`, so
+`allowed_signers` handling stays OpenSSH's. Hidden subcommands: `ssh-sign-helper` (for
+wrapper scripts) and `ssh-default-key` (for `gpg.ssh.defaultKeyCommand`). Two non-negotiable
+rules: the helper NEVER prompts - a locked vault exits 1 with `vault is locked; run bogita
+unlock` - and it NEVER writes the keychain: it is a read-only consumer of the staged
+identity, the same rule the watcher follows.
+
+TUI: v1 ships no agent surface - no status pane, no leader-mode binding. The daemon is a
+separate process whose state the TUI does not own, and the TUI lock screen already reflects
+the shared keychain signal. Deferred, revisit after v1.
 
 ## Testing Philosophy
 
@@ -521,7 +614,77 @@ Actions must be context-aware based on which column has focus:
 - Entries column focused: a = add entry, e = edit entry, d = delete entry
 - Detail column focused: c = copy field, s = reveal secret
 
+### Input Keys
+
+Text inputs insert only unmodified printable chars. SHIFT-modified chars insert too, because a
+terminal reports them as the shifted char with SHIFT set. Ctrl, Alt, Super, and Meta chords insert
+nothing and stay free for the app and for the input widget. Ctrl-c remains the app-global quit.
+
+Bracketed paste is enabled while the TUI runs and disabled on every exit path, so a paste arrives
+as one atomic event instead of a key storm. SshKey values and Notes keep their line structure
+(normalized to LF); every single-line field (name, field key, other values, vault name, search,
+passphrase) turns each line break into one space; the type slot ignores pastes.
+
+- Vault form: the name field rejects modified chars; Alt-t flips the default-vault checkbox and
+  Space is inert on that cell.
+- Lock screen: the passphrase rejects modified chars. Esc quits, Enter unlocks, Backspace deletes.
+- Search box: the query rejects modified chars. Esc closes, Enter commits, Backspace deletes.
+- Entry form: every printable char and Space types into the focused name/key/value/notes input and
+  fires no action. Management actions sit behind Alt, so a focused input owns the whole bare
+  keyboard.
+
+  | Chord   | Action                                                    |
+  |---------|-----------------------------------------------------------|
+  | Alt-s   | Save from any slot, including the type slot and its popup  |
+  | Alt-n   | Append a field row (any slot)                             |
+  | Alt-d   | Remove the focused field row (key/value/type slots)        |
+  | Alt-g   | Password generator (obscured value slot, non-SshKey entry) |
+  | Alt-r   | Toggle reveal of the focused obscured value                |
+  | Alt-v   | Open the vault picker                                      |
+  | Alt-t   | Flip the agent-servable/boolean value cell                 |
+
+  Enter submits the form from a text slot and opens the type dropdown from the type slot. On the
+  type slot, j/k change the type with the popup closed, and Space changes nothing. Because Enter
+  belongs to the dropdown there, the type slot advertises Alt-s as its save key. Esc in edit mode
+  opens the save/discard modal (`s` save, `d` discard, `b`/Esc back); in add mode a dirty Esc still
+  asks before discarding the typed rows. On both modals Enter repeats the primary action: `s` on
+  the save modal, `b` on the discard modal. The delete modals keep `d`/`c`/Esc only.
+
+### Keybindings Are Generated
+
+Every footer hint and the modal hint rows come from the per-surface tables in
+`crates/tui/src/app/bindings.rs`. Hand-editing a rendered hint string is a defect: change the
+table. `?` opens the keybindings overlay for the focused surface (the whole registry on Main),
+with `j`/`k` to scroll and `?`/Esc/`q` to close; the drift test
+(`crates/tui/test/app/hints_drift.rs`) fails when a hint stops matching its table or when a hint
+literal reappears in `render.rs` or `modals.rs`.
+
+The predicate lives in `crates/tui/src/views/mod.rs` (`inserts_text`); every hand-rolled input
+calls it.
+
+Value rules validate in realtime: an SshKey value must parse as an OpenSSH PEM (a closed armor is
+judged immediately, half-typed armor once the slot is left) and a Totp secret must be base32. An
+invalid value marks its value cell with ⚠ and blocks every save chord (Enter, Alt-s, `s` in the
+modal); the form summary names the field and the fix, and nothing reaches storage.
+
 ### ActiveView State Machine
 
 Main, Form(EntryForm), VaultForm(VaultForm), ConfirmSave, ConfirmDelete, PasswordGen.
 All key handling is synchronous. Async mutations deferred to pending and flushed after each keypress.
+
+### Exit Path
+
+Every exit locks the vault — the loop end is the only exit tail:
+
+- Quit keys: `q`/`Q` in the main view and Esc on the lock screen set `RunState::Quit`. Ctrl-C
+  arrives as a key event, not SIGINT, because raw mode owns the terminal; `keys.rs` maps it to
+  the same state.
+- Signals: `crates/tui/src/app/signals.rs` installs record-only handlers for SIGINT, SIGHUP and
+  SIGTERM (the daemon's `signals.rs` shape plus SIGTERM). `run()` installs them and the event
+  loop polls the flag on every tick, so the 250 ms `event::poll` bounds the delay.
+- Order: `run()` calls `ratatui::restore()` first and then `lock_at_exit`, so a failing lock
+  still leaves a usable terminal. `lock_at_exit` deletes the staged keychain identity and
+  retries once; two failures print to stderr and exit 3.
+- The lock does not depend on `lock_timeout`: the idle timer is optional, the exit lock is not.
+  The daemon watcher then answers FAILURE(5) within one 500 ms poll.
+- SIGKILL (`kill -9`) cannot be caught — `bogita lock` and the auto-lock timer cover that case.

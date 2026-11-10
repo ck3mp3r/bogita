@@ -4,7 +4,7 @@
 //! display labels, and the obscured/encrypted flag, and it maps to and from the
 //! domain `FieldType`.
 
-use bogita_core::domain::{Entry, FieldType, FieldValue};
+use bogita_core::domain::{Entry, FieldType, FieldValue, AGENT_SERVABLE_KEY};
 use rat_widget::choice::ChoiceState;
 use rat_widget::text_input::TextInputState;
 use rat_widget::textarea::TextAreaState;
@@ -32,6 +32,9 @@ pub enum ValidationIssue {
     EmptyName,
     EmptyKey(usize),
     DuplicateKey(usize),
+    InvalidAgentServable(usize),
+    InvalidSshKey(usize),
+    InvalidTotp(usize),
 }
 
 // ── FormFieldType ─────────────────────────────────────────────────────────────
@@ -49,17 +52,19 @@ pub enum FormFieldType {
     Totp,
     SshKey,
     Notes,
+    Boolean,
 }
 
 impl FormFieldType {
     /// Dropdown order, display label, and whether the value is obscured/encrypted.
-    const TABLE: [(Self, &'static str, bool); 6] = [
+    pub(super) const TABLE: [(Self, &'static str, bool); 7] = [
         (Self::Text, "text", false),
         (Self::Username, "username", false),
         (Self::Token, "token", true),
         (Self::Totp, "totp", true),
         (Self::SshKey, "ssh-key", true),
         (Self::Notes, "notes", false),
+        (Self::Boolean, "boolean", false),
     ];
 
     /// Number of selectable variants.
@@ -110,8 +115,21 @@ impl FormFieldType {
             FieldType::TotpSecret => Self::Totp,
             FieldType::SshPrivateKey => Self::SshKey,
             FieldType::Notes => Self::Notes,
-            // Url and all Custom variants → plain Text
+            FieldType::Boolean => Self::Boolean,
+            FieldType::Custom(name) if name == AGENT_SERVABLE_KEY => Self::Boolean,
+            // Url and all other Custom variants → plain Text
             _ => Self::Text,
+        }
+    }
+
+    /// Parse the agent-servable value slot text; `None` when it is neither `true`
+    /// nor `false`. The value is Boolean on confirm only when this parses, so an
+    /// unparsable slot never reaches storage as a gate.
+    pub(super) fn parse_agent_servable(value: &str) -> Option<bool> {
+        match value.trim() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
         }
     }
 
@@ -124,6 +142,7 @@ impl FormFieldType {
             Self::Totp => FieldType::TotpSecret,
             Self::SshKey => FieldType::SshPrivateKey,
             Self::Notes => FieldType::Notes,
+            Self::Boolean => FieldType::Boolean,
         }
     }
 
@@ -131,6 +150,9 @@ impl FormFieldType {
     pub(super) fn to_domain_value(&self, value: &str) -> FieldValue {
         match self {
             Self::Token | Self::Totp | Self::SshKey => FieldValue::Hidden(value.to_string()),
+            Self::Boolean => {
+                FieldValue::Boolean(Self::parse_agent_servable(value).unwrap_or(false))
+            }
             _ => FieldValue::Text(value.to_string()),
         }
     }
@@ -150,6 +172,10 @@ pub(super) struct FormField {
     /// Whether the user has typed in the key slot. Used to avoid flagging
     /// newly-added blank fields as validation errors immediately.
     pub(super) touched: bool,
+    /// Whether the loaded row was recognised as the agent-servable gate. The
+    /// stored `Custom("agent_servable")` field type is lost in `from_domain`,
+    /// so the row carries the recognition itself.
+    pub(super) agent_servable: bool,
 }
 
 impl FormField {
@@ -161,7 +187,14 @@ impl FormField {
             type_state: ChoiceState::named("type"),
             textarea_state: None,
             touched: false,
+            agent_servable: false,
         }
+    }
+
+    /// Whether this row IS the agent-servable gate: recognised at load from the
+    /// stored key or field type, or recognised now from the key slot text.
+    pub(super) fn is_agent_servable(&self) -> bool {
+        self.agent_servable || self.key_state.text() == AGENT_SERVABLE_KEY
     }
 }
 

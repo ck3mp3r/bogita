@@ -1,6 +1,7 @@
 //! Tui application shell — struct, constructor, event loop, and lock.
 
 use super::actions::{AppAction, PendingCopy};
+use super::signals;
 use crate::context::TuiContext;
 use crate::views::entry_form::EntryForm;
 use crate::views::main_view::MainView;
@@ -99,6 +100,8 @@ pub struct Tui<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> {
     pub status_message_kind: MessageKind,
     /// Timestamp of the last keypress — used for auto-lock.
     pub last_keypress: Instant,
+    /// `Some(scroll)` while the `?` keybindings overlay is open.
+    pub(super) help: Option<u16>,
 }
 
 impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
@@ -166,31 +169,59 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             status_message: None,
             status_message_kind: MessageKind::Info,
             last_keypress: Instant::now(),
+            help: None,
         })
     }
 
     /// Run the TUI event loop.
+    ///
+    /// Every exit path ends here: quit keys, Ctrl-C and the termination signals
+    /// all stop the loop, then the terminal is restored and the staged identity
+    /// is deleted. Restore comes first so a lock failure still leaves a usable
+    /// terminal.
     pub async fn run(mut self) -> Result<()> {
+        if let Err(e) = signals::install() {
+            eprintln!("warning: cannot install the exit signal handlers: {e}");
+        }
         let terminal = ratatui::init();
         ratatui::crossterm::execute!(
             std::io::stdout(),
+            ratatui::crossterm::event::EnableBracketedPaste,
             ratatui::crossterm::cursor::SetCursorStyle::SteadyBar
         )?;
         let result = self.event_loop(terminal).await;
+        // Give the terminal its plain paste mode back before anything else can
+        // fail; a locked or dead terminal must not keep the bracketed mode on.
+        let _ = ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::DisableBracketedPaste
+        );
         ratatui::restore();
+        self.lock_at_exit();
         result
     }
 
     async fn event_loop(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         while self.state == RunState::Running {
+            // A termination signal ends the loop on the next tick; the poll
+            // below bounds the delay to 250 ms.
+            if signals::termination_requested() {
+                self.state = RunState::Quit;
+                break;
+            }
             terminal.draw(|f| self.render(f))?;
             if event::poll(Duration::from_millis(250))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.last_keypress = Instant::now();
                         self.handle_key_with_modifiers(key.code, key.modifiers);
                         self.flush_pending().await?;
                     }
+                    Event::Paste(payload) => {
+                        self.handle_paste(&payload);
+                        self.flush_pending().await?;
+                    }
+                    _ => {}
                 }
             }
             // Auto-lock check: lock after lock_timeout seconds of inactivity
@@ -224,6 +255,34 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             error: None,
         };
     }
+
+    /// Lock on the way out, after `ratatui::restore()`.
+    ///
+    /// The lock is not optional: leaving the identity staged keeps the agent
+    /// daemon serving keys with no owner. One retry, then a loud failure and
+    /// exit code 3, so a script sees that the vault is still open.
+    pub(super) fn lock_at_exit(&mut self) {
+        if let Err(e) = lock_with_retry(&mut self.app) {
+            eprintln!(
+                "error: failed to lock the vault at exit ({e}); the staged identity stays in the keychain — run bogita lock"
+            );
+            std::process::exit(3);
+        }
+        self.main_view.reload_entries(Vec::new());
+        self.detail_entry = None;
+        self.active = ActiveView::Locked {
+            passphrase_input: TextInputState::named("passphrase"),
+            error: None,
+        };
+    }
+}
+
+/// Lock the app, retrying once: a transient keychain error must not leave the
+/// identity staged.
+fn lock_with_retry<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore>(
+    app: &mut App<K, F, I>,
+) -> Result<()> {
+    app.lock().or_else(|_| app.lock())
 }
 
 /// Resolve the vault to use: the named vault when it exists, else the default

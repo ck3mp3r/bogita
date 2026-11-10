@@ -1,4 +1,6 @@
+pub mod agent;
 pub mod entry;
+pub mod ssh_sign;
 pub mod vault;
 
 use bogita_core::domain::Vault;

@@ -2,6 +2,7 @@
 
 pub mod entity;
 pub mod key;
+pub mod ssh;
 pub mod sync;
 pub mod vault;
 
@@ -13,10 +14,14 @@ pub use uuid::Uuid;
 // Re-export all domain types for backward compatibility
 pub use entity::{Entry, EntryType, Field, FieldType, FieldValue};
 pub use key::{AgeIdentity, AgeRecipient};
+pub use ssh::{agent_servable_field, SshKeyMaterial, AGENT_SERVABLE_KEY};
 pub use sync::{Change, Operation, PushResult, SyncMetadata, SyncType};
 pub use vault::{AwsConfig, GcpConfig, GitConfig, SyncTarget, Vault};
 
 // region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/domain/boolean.rs"]
+mod boolean;
 #[cfg(test)]
 #[path = "../../test/domain/test.rs"]
 mod test;

@@ -1,6 +1,9 @@
 use crate::views::entry_form::{EntryForm, FormAction, FormFieldType};
-use bogita_core::domain::{FieldType, FieldValue};
+use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue, AGENT_SERVABLE_KEY};
+use bogita_core::test_support::RSA_OPENSSH_PEM;
+use chrono::Utc;
 use ratatui::crossterm::event::KeyCode;
+use uuid::Uuid;
 
 use super::support::*;
 
@@ -9,12 +12,8 @@ use super::support::*;
 #[test]
 fn token_type_produces_hidden_field_value() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     for c in "password".chars() {
-        form.handle_key(KeyCode::Char(c));
-    }
-    form.handle_key(KeyCode::Tab); // → value
-    for c in "s3cr3t".chars() {
         form.handle_key(KeyCode::Char(c));
     }
     form.handle_key(KeyCode::Tab); // → type slot
@@ -23,6 +22,10 @@ fn token_type_produces_hidden_field_value() {
     form.handle_key(KeyCode::Char('j')); // Username
     form.handle_key(KeyCode::Char('j')); // Token
     form.handle_key(KeyCode::Enter); // confirm selection
+    form.handle_key(KeyCode::Tab); // → value
+    for c in "s3cr3t".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
     form.handle_key(KeyCode::Tab); // → wrap back to name
     let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
         panic!("expected Confirm");
@@ -35,10 +38,11 @@ fn token_type_produces_hidden_field_value() {
 #[test]
 fn text_type_produces_text_field_value_with_custom_field_type() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     for c in "url".chars() {
         form.handle_key(KeyCode::Char(c));
     }
+    form.handle_key(KeyCode::Tab); // → type slot
     form.handle_key(KeyCode::Tab); // → value
     for c in "https://github.com".chars() {
         form.handle_key(KeyCode::Char(c));
@@ -57,15 +61,15 @@ fn text_type_produces_text_field_value_with_custom_field_type() {
 #[test]
 fn username_type_produces_text_field_value_with_username_field_type() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Tab); // → value
-    for c in "alice".chars() {
-        form.handle_key(KeyCode::Char(c));
-    }
+    add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
     form.handle_key(KeyCode::Char('j')); // → 1=Username
     form.handle_key(KeyCode::Enter); // confirm selection
+    form.handle_key(KeyCode::Tab); // → value
+    for c in "alice".chars() {
+        form.handle_key(KeyCode::Char(c));
+    }
     form.handle_key(KeyCode::Tab); // → name
     let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
         panic!("expected Confirm");
@@ -77,11 +81,7 @@ fn username_type_produces_text_field_value_with_username_field_type() {
 #[test]
 fn sshkey_type_produces_hidden_field_value_with_sshprivatekey_field_type() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Tab); // → value
-    for c in "-----BEGIN".chars() {
-        form.handle_key(KeyCode::Char(c));
-    }
+    add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
     form.handle_key(KeyCode::Char('j')); // Username
@@ -89,6 +89,10 @@ fn sshkey_type_produces_hidden_field_value_with_sshprivatekey_field_type() {
     form.handle_key(KeyCode::Char('j')); // Totp
     form.handle_key(KeyCode::Char('j')); // SshKey
     form.handle_key(KeyCode::Enter); // confirm selection
+    form.handle_key(KeyCode::Tab); // → value
+    form.fields[0].value_state.set_text(RSA_OPENSSH_PEM);
+    let pem_len = form.fields[0].value_state.len();
+    form.fields[0].value_state.set_cursor(pem_len, false);
     form.handle_key(KeyCode::Tab); // → name
     let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
         panic!("expected Confirm");
@@ -109,7 +113,7 @@ fn esc_always_cancels_form() {
 #[test]
 fn esc_cancels_from_type_slot() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → value
     form.handle_key(KeyCode::Tab); // → type slot
                                    // Form has a name and a field, so it's dirty — Esc returns ConfirmDiscard.
@@ -189,7 +193,7 @@ fn edit_form_maps_sshprivatekey_to_sshkey_form_type() {
         fields: vec![Field {
             id: Uuid::new_v4(),
             key: "private_key".to_string(),
-            value: FieldValue::Hidden("-----BEGIN".to_string()),
+            value: FieldValue::Hidden(RSA_OPENSSH_PEM.to_string()),
             field_type: FieldType::SshPrivateKey,
             encrypted: true,
             idx: 0,
@@ -215,14 +219,15 @@ fn slot_label_on_name_slot() {
 #[test]
 fn slot_label_on_key_slot() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+')); // adds field, focus → key slot of field 0
+    add_field(&mut form); // adds field, focus → key slot of field 0
     assert_eq!(form.focused_slot_label(), "key");
 }
 
 #[test]
 fn slot_label_on_value_slot_plain() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+')); // focus → key slot
+    add_field(&mut form); // focus → key slot
+    form.handle_key(KeyCode::Tab); // focus → type slot
     form.handle_key(KeyCode::Tab); // focus → value slot (type=Text, not obscured)
     assert_eq!(form.focused_slot_label(), "value");
 }
@@ -230,23 +235,21 @@ fn slot_label_on_value_slot_plain() {
 #[test]
 fn slot_label_on_value_slot_obscured() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+')); // focus → key slot
-    form.handle_key(KeyCode::Tab); // focus → value slot
+    add_field(&mut form); // focus → key slot
     form.handle_key(KeyCode::Tab); // focus → type slot
                                    // select Token (index 2): j=Username, j=Token
     open_dropdown(&mut form);
     form.handle_key(KeyCode::Char('j')); // Username
     form.handle_key(KeyCode::Char('j')); // Token
     form.handle_key(KeyCode::Enter); // confirm selection
-    form.handle_key(KeyCode::BackTab); // back to value slot
+    form.handle_key(KeyCode::Tab); // forward to the value slot
     assert_eq!(form.focused_slot_label(), "token");
 }
 
 #[test]
 fn slot_label_on_type_slot() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+')); // focus → key slot
-    form.handle_key(KeyCode::Tab); // value
+    add_field(&mut form); // focus → key slot
     form.handle_key(KeyCode::Tab); // type slot
     assert_eq!(form.focused_slot_label(), "type");
 }
@@ -256,15 +259,14 @@ fn slot_label_on_type_slot() {
 #[test]
 fn field_badge_for_plain_field_is_text() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+')); // adds field, type=Text
+    add_field(&mut form); // adds field, type=Text
     assert_eq!(form.field_badge(0), "text");
 }
 
 #[test]
 fn field_badge_for_token_field_is_token() {
     let mut form = add_form();
-    form.handle_key(KeyCode::Char('+')); // adds field, focus → key
-    form.handle_key(KeyCode::Tab); // value
+    add_field(&mut form); // adds field, focus → key
     form.handle_key(KeyCode::Tab); // type slot
     open_dropdown(&mut form);
     form.handle_key(KeyCode::Char('j')); // Username
@@ -297,4 +299,96 @@ fn form_field_type_is_encrypted_for_token_totp_sshkey() {
     assert!(FormFieldType::Token.is_encrypted());
     assert!(FormFieldType::Totp.is_encrypted());
     assert!(FormFieldType::SshKey.is_encrypted());
+}
+
+// ── agent-servable round trip ─────────────────────────────────────────────────
+
+fn agent_servable_entry(key: &str, value: FieldValue) -> Entry {
+    Entry {
+        id: Uuid::new_v4(),
+        vault_id: Uuid::new_v4(),
+        name: "Deploy key".to_string(),
+        entry_type: EntryType::Token,
+        fields: vec![Field {
+            id: Uuid::new_v4(),
+            key: key.to_string(),
+            value,
+            field_type: FieldType::Custom(AGENT_SERVABLE_KEY.to_string()),
+            encrypted: false,
+            idx: 0,
+        }],
+        created_at: Utc::now().timestamp(),
+        modified_at: Utc::now().timestamp(),
+    }
+}
+
+#[test]
+fn edit_form_round_trips_agent_servable_as_boolean_true() {
+    // -- Setup & Fixtures
+    let entry = agent_servable_entry(AGENT_SERVABLE_KEY, FieldValue::Boolean(true));
+    let mut form = EntryForm::new_edit(&entry);
+
+    // -- Exec
+    let FormAction::Confirm(confirmed) = form.handle_key(KeyCode::Enter) else {
+        panic!("expected Confirm");
+    };
+
+    // -- Check
+    assert_eq!(confirmed.fields[0].key, AGENT_SERVABLE_KEY);
+    assert_eq!(confirmed.fields[0].field_type, FieldType::Boolean);
+    assert_eq!(confirmed.fields[0].value, FieldValue::Boolean(true));
+    assert!(
+        !confirmed.fields[0].encrypted,
+        "the daemon reads the gate in plaintext"
+    );
+}
+
+#[test]
+fn edit_form_round_trips_agent_servable_as_boolean_false() {
+    // -- Setup & Fixtures
+    let entry = agent_servable_entry(AGENT_SERVABLE_KEY, FieldValue::Boolean(false));
+    let mut form = EntryForm::new_edit(&entry);
+
+    // -- Exec
+    let FormAction::Confirm(confirmed) = form.handle_key(KeyCode::Enter) else {
+        panic!("expected Confirm");
+    };
+
+    // -- Check
+    assert_eq!(confirmed.fields[0].value, FieldValue::Boolean(false));
+}
+
+#[test]
+fn agent_servable_confirm_forces_the_canonical_key() {
+    // -- Setup & Fixtures: a row whose key slot says something else
+    let entry = agent_servable_entry("servable_flag", FieldValue::Boolean(true));
+    let mut form = EntryForm::new_edit(&entry);
+
+    // -- Exec
+    let FormAction::Confirm(confirmed) = form.handle_key(KeyCode::Enter) else {
+        panic!("expected Confirm");
+    };
+
+    // -- Check
+    assert_eq!(confirmed.fields[0].key, AGENT_SERVABLE_KEY);
+    assert_eq!(confirmed.fields[0].value, FieldValue::Boolean(true));
+}
+
+#[test]
+fn agent_servable_value_other_than_true_or_false_is_rejected() {
+    // -- Setup & Fixtures
+    let entry = agent_servable_entry(AGENT_SERVABLE_KEY, FieldValue::Text("yes".to_string()));
+    let mut form = EntryForm::new_edit(&entry);
+
+    // -- Exec
+    let action = form.handle_key(KeyCode::Enter);
+
+    // -- Check
+    match action {
+        FormAction::ValidationError(message) => assert!(
+            message.contains("true or false"),
+            "the message names the accepted values, got: {message}"
+        ),
+        other => panic!("expected a validation error, got {other:?}"),
+    }
 }

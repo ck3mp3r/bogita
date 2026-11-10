@@ -1,5 +1,6 @@
 //! Centered modal and overlay painters.
 
+use super::bindings;
 use rat_widget::text_input::TextInputState;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -209,6 +210,7 @@ pub(super) fn render_confirm_save_modal(frame: &mut Frame, area: Rect, entry_nam
         ),
         Span::raw("?"),
     ])];
+    let hint = bindings::hint(bindings::CONFIRM_SAVE);
 
     render_centered_modal(
         frame,
@@ -220,7 +222,7 @@ pub(super) fn render_confirm_save_modal(frame: &mut Frame, area: Rect, entry_nam
             border_color: Color::Yellow,
             message_band: Some(1),
             message: lines,
-            hint: "  [s] save  [d] discard  [Esc] back to form",
+            hint: &hint,
         },
     );
 }
@@ -230,6 +232,7 @@ pub(super) fn render_confirm_discard_modal(frame: &mut Frame, area: Rect) {
     let lines =
         vec![Line::from("  You have unsaved changes. Discard?")
             .style(Style::default().fg(Color::White))];
+    let hint = bindings::hint(bindings::CONFIRM_DISCARD);
 
     render_centered_modal(
         frame,
@@ -241,7 +244,7 @@ pub(super) fn render_confirm_discard_modal(frame: &mut Frame, area: Rect) {
             border_color: Color::Yellow,
             message_band: Some(1),
             message: lines,
-            hint: "  [d] discard  [b/Esc] back to form",
+            hint: &hint,
         },
     );
 }

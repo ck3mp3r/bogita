@@ -20,7 +20,7 @@ zeroize = { version = "1.9", features = ["derive"] }
 secrecy = { version = "0.10", features = ["serde"] }
 base64 = "0.23"
 sqlx = { version = "0.9", optional = true, features = ["runtime-tokio", "sqlite", "migrate"] }
-tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs"] }
+tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs", "net", "io-util", "sync"] }
 async-trait = "0.1"
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -32,6 +32,11 @@ xdg = "3"
 arboard = { version = "3", default-features = false }
 rand = "0.10"
 totp-lite = "2"
+ssh-key = { version = "0.6", features = ["ed25519", "rsa", "rand_core"] }
+rsa = { version = "0.9", default-features = false, features = ["sha2"] }
+signature = "2"
+ssh-agent-lib = "0.6"
+libc = "0.2"
 data-encoding = "2"
 keyring = { version = "4.2", features = ["v1", "apple-native-keyring-store", "windows-native-keyring-store", "linux-keyutils-keyring-store"] }
 

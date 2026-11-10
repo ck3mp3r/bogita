@@ -5,6 +5,7 @@
 
 use crate::error::{ConfigError, Result};
 use serde::{Deserialize, Serialize};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 /// App name used as the XDG prefix for every path this crate builds.
@@ -25,7 +26,9 @@ fn xdg_dirs() -> xdg::BaseDirectories {
 }
 
 /// `$XDG_DATA_HOME/bogita[-dev]/`  (default: `~/.local/share/bogita[-dev]/`)
-fn default_data_dir() -> PathBuf {
+///
+/// Shared with the agent socket (G2), which lives in this directory.
+pub fn default_data_dir() -> PathBuf {
     xdg_dirs()
         .get_data_home()
         .unwrap_or_else(fallback_data_home)
@@ -72,6 +75,24 @@ pub fn default_db_path() -> PathBuf {
 /// `$XDG_DATA_HOME/bogita[-dev]/identity.age`
 pub fn default_identity_path() -> PathBuf {
     default_data_dir().join("identity.age")
+}
+
+/// Create `dir` and any missing parent with mode 0700 when they do not exist.
+///
+/// The agent refuses to serve from a directory another user can reach
+/// (`agent::socket::prepare`), and the vault creates the data directory long before
+/// the agent starts. Creating it owner-only here keeps the two from disagreeing.
+/// `DirBuilder::recursive` applies the mode to every level it creates, so on a fresh
+/// home the intermediate directories are owner-only from the first instant too. An
+/// existing directory keeps its mode: the agent's check must see the real state.
+pub fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
 }
 
 /// Root application configuration.
@@ -132,7 +153,7 @@ impl AppConfig {
     /// Creates parent directories if they don't exist.
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| ConfigError::WriteFailed(e.to_string()))?;
+            ensure_private_dir(parent).map_err(|e| ConfigError::WriteFailed(e.to_string()))?;
         }
         let contents =
             toml::to_string_pretty(self).map_err(|e| ConfigError::WriteFailed(e.to_string()))?;

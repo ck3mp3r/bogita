@@ -21,6 +21,7 @@ rat-event = "2.1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.24", features = ["v4", "serde"] }
 secrecy = { version = "0.10", features = ["serde"] }
+libc = "0.2"
 
 [dev-dependencies]
 bogita-core = { path = "../core", features = ["test-support"] }

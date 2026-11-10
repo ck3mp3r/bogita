@@ -21,7 +21,8 @@ pub fn write_identity_encrypted(
     path: &Path,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| ConfigError::WriteFailed(e.to_string()))?;
+        crate::storage::config::ensure_private_dir(parent)
+            .map_err(|e| ConfigError::WriteFailed(e.to_string()))?;
     }
 
     let secret = identity.to_secret_string();

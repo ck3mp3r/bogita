@@ -26,15 +26,14 @@ fn render_caret(form: &mut EntryForm) -> Result<(u16, u16)> {
 /// A form with one field, focused on the type slot, with the type set to notes.
 fn form_on_notes_slot() -> EntryForm {
     let mut form = add_form_named("Test");
-    form.handle_key(KeyCode::Char('+')); // add field, focus → key slot
-    form.handle_key(KeyCode::Tab); // key → value
-    form.handle_key(KeyCode::Tab); // value → type
+    add_field(&mut form); // add field, focus → key slot
+    form.handle_key(KeyCode::Tab); // key → type slot
     open_dropdown(&mut form);
     for _ in 0..5 {
         form.handle_key(KeyCode::Char('j')); // text → notes
     }
     form.handle_key(KeyCode::Enter); // confirm selection
-    form.handle_key(KeyCode::BackTab); // type → value (now notes)
+    form.handle_key(KeyCode::Tab); // type → value (now notes)
     form
 }
 
@@ -64,7 +63,7 @@ fn test_entry_form_cursor_name_slot_add_mode() -> Result<()> {
 fn test_entry_form_cursor_key_slot() -> Result<()> {
     // -- Setup & Fixtures
     let mut form = add_form_named("Test");
-    form.handle_key(KeyCode::Char('+')); // add field, focus → key slot
+    add_field(&mut form); // add field, focus → key slot
 
     // -- Exec
     let caret = render_caret(&mut form)?;
@@ -85,8 +84,9 @@ fn test_entry_form_cursor_key_slot() -> Result<()> {
 fn test_entry_form_cursor_plain_value_slot() -> Result<()> {
     // -- Setup & Fixtures
     let mut form = add_form_named("Test");
-    form.handle_key(KeyCode::Char('+')); // add field, focus → key slot
-    form.handle_key(KeyCode::Tab); // key → value (plain text)
+    add_field(&mut form); // add field, focus → key slot
+    form.handle_key(KeyCode::Tab); // key → type
+    form.handle_key(KeyCode::Tab); // type → value (plain text)
 
     // -- Exec
     let caret = render_caret(&mut form)?;
@@ -177,9 +177,8 @@ fn test_entry_form_cursor_edit_mode_name_slot() -> Result<()> {
 fn test_entry_form_cursor_type_slot_leaves_caret_untouched() -> Result<()> {
     // -- Setup & Fixtures
     let mut form = add_form_named("Test");
-    form.handle_key(KeyCode::Char('+')); // add field, focus → key slot
-    form.handle_key(KeyCode::Tab); // key → value
-    form.handle_key(KeyCode::Tab); // value → type slot
+    add_field(&mut form); // add field, focus → key slot
+    form.handle_key(KeyCode::Tab); // key → type slot
 
     // -- Exec
     let caret = render_caret(&mut form)?;

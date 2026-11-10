@@ -1,5 +1,5 @@
 use crate::args::{AgentCommands, Cli, Commands, EntryCommands, VaultCommands};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 fn parse(args: &[&str]) -> Cli {
     Cli::parse_from(std::iter::once("bogita").chain(args.iter().copied()))
@@ -159,6 +159,141 @@ fn entry_cp_parses() {
     ));
 }
 
+// ── entry ssh ─────────────────────────────────────────────────────────────
+
+#[test]
+fn entry_keygen_with_comment_parses() {
+    let cli = parse(&["entry", "keygen", "alice@laptop"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Keygen {
+            comment: Some(ref c),
+            name: None,
+            vault: None,
+        })) if c == "alice@laptop"
+    ));
+}
+
+#[test]
+fn entry_keygen_without_comment_parses() {
+    let cli = parse(&["entry", "keygen"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Keygen {
+            comment: None,
+            name: None,
+            vault: None,
+        }))
+    ));
+}
+
+#[test]
+fn entry_keygen_with_name_and_vault_parses() {
+    let cli = parse(&[
+        "entry",
+        "keygen",
+        "alice@laptop",
+        "--name",
+        "work-key",
+        "--vault",
+        "work",
+    ]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Keygen {
+            comment: Some(ref c),
+            name: Some(ref n),
+            vault: Some(ref v),
+        })) if c == "alice@laptop" && n == "work-key" && v == "work"
+    ));
+}
+
+#[test]
+fn entry_rotate_parses() {
+    let cli = parse(&["entry", "rotate", "work-key"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Rotate {
+            ref name,
+            comment: None,
+            vault: None,
+        })) if name == "work-key"
+    ));
+}
+
+#[test]
+fn entry_rotate_with_comment_parses() {
+    let cli = parse(&["entry", "rotate", "work-key", "--comment", "alice@newhost"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Rotate {
+            ref name,
+            comment: Some(ref c),
+            vault: None,
+        })) if name == "work-key" && c == "alice@newhost"
+    ));
+}
+
+#[test]
+fn entry_pubkey_parses() {
+    let cli = parse(&["entry", "pubkey", "work-key"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Pubkey {
+            ref name,
+            copy: false,
+            vault: None,
+        })) if name == "work-key"
+    ));
+}
+
+#[test]
+fn entry_pubkey_with_copy_parses() {
+    let cli = parse(&["entry", "pubkey", "work-key", "--copy"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Pubkey {
+            ref name,
+            copy: true,
+            vault: None,
+        })) if name == "work-key"
+    ));
+}
+
+#[test]
+fn entry_serve_on_parses() {
+    let cli = parse(&["entry", "serve", "work-key", "--on"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Serve {
+            ref name,
+            on: true,
+            off: false,
+            vault: None,
+        })) if name == "work-key"
+    ));
+}
+
+#[test]
+fn entry_serve_off_parses() {
+    let cli = parse(&["entry", "serve", "work-key", "--off"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Entry(EntryCommands::Serve {
+            ref name,
+            on: false,
+            off: true,
+            vault: None,
+        })) if name == "work-key"
+    ));
+}
+
+#[test]
+fn entry_serve_without_state_is_rejected() {
+    let result = Cli::try_parse_from(["bogita", "entry", "serve", "work-key"]);
+    assert!(result.is_err(), "--on or --off is required");
+}
+
 // ── vault ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -184,8 +319,93 @@ fn vault_unlock_parses() {
     let cli = parse(&["vault", "unlock"]);
     assert!(matches!(
         cli.command,
-        Some(Commands::Vault(VaultCommands::Unlock))
+        Some(Commands::Vault(VaultCommands::Unlock {
+            password: None,
+            password_stdin: false,
+            password_file: None,
+        }))
     ));
+}
+
+#[test]
+fn vault_unlock_with_password_parses() {
+    let cli = parse(&["vault", "unlock", "--password", "correct horse"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Vault(VaultCommands::Unlock {
+            password: Some(ref value),
+            password_stdin: false,
+            password_file: None,
+        })) if value == "correct horse"
+    ));
+}
+
+#[test]
+fn vault_unlock_short_password_flag_parses() {
+    let cli = parse(&["vault", "unlock", "-p", "correct horse"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Vault(VaultCommands::Unlock {
+            password: Some(ref value),
+            ..
+        })) if value == "correct horse"
+    ));
+}
+
+#[test]
+fn vault_unlock_with_password_stdin_parses() {
+    let cli = parse(&["vault", "unlock", "--password-stdin"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Vault(VaultCommands::Unlock {
+            password: None,
+            password_stdin: true,
+            password_file: None,
+        }))
+    ));
+}
+
+#[test]
+fn vault_unlock_with_password_file_parses() {
+    let cli = parse(&["vault", "unlock", "--password-file", "/tmp/pass"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Vault(VaultCommands::Unlock {
+            password: None,
+            password_stdin: false,
+            password_file: Some(ref path),
+        })) if path == &std::path::PathBuf::from("/tmp/pass")
+    ));
+}
+
+#[test]
+fn vault_unlock_accepts_one_source_at_a_time() {
+    let cases: [&[&str]; 3] = [
+        &["vault", "unlock", "--password", "x", "--password-stdin"],
+        &[
+            "vault",
+            "unlock",
+            "--password",
+            "x",
+            "--password-file",
+            "/tmp/p",
+        ],
+        &[
+            "vault",
+            "unlock",
+            "--password-stdin",
+            "--password-file",
+            "/tmp/p",
+        ],
+    ];
+    for args in cases {
+        // -- Exec
+        let result = Cli::try_parse_from(args);
+
+        // -- Check: clap rejects the combination with its usage-error exit code
+        let error = result.expect_err("two passphrase sources must be rejected");
+        assert_eq!(error.exit_code(), 2, "args: {args:?}");
+    }
 }
 
 #[test]
@@ -240,7 +460,34 @@ fn agent_start_parses() {
     let cli = parse(&["agent", "start"]);
     assert!(matches!(
         cli.command,
-        Some(Commands::Agent(AgentCommands::Start { socket: None }))
+        Some(Commands::Agent(AgentCommands::Start {
+            socket: None,
+            internal: false,
+        }))
+    ));
+}
+
+#[test]
+fn agent_start_with_socket_parses() {
+    let cli = parse(&["agent", "start", "--socket", "/tmp/agent.sock"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Agent(AgentCommands::Start {
+            socket: Some(ref s),
+            internal: false,
+        })) if s == "/tmp/agent.sock"
+    ));
+}
+
+#[test]
+fn agent_start_internal_parses() {
+    let cli = parse(&["agent", "start", "--internal"]);
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Agent(AgentCommands::Start {
+            socket: None,
+            internal: true,
+        }))
     ));
 }
 
@@ -269,4 +516,55 @@ fn agent_keys_parses() {
         cli.command,
         Some(Commands::Agent(AgentCommands::Keys))
     ));
+}
+
+// ── hidden git helpers ──────────────────────────────────────────────────────
+
+#[test]
+fn ssh_sign_helper_parses_git_argv_verbatim() {
+    let cli = parse(&[
+        "ssh-sign-helper",
+        "-Y",
+        "sign",
+        "-n",
+        "git",
+        "-f",
+        "/tmp/key",
+        "-U",
+        "/tmp/data",
+    ]);
+    let expected = vec![
+        "-Y",
+        "sign",
+        "-n",
+        "git",
+        "-f",
+        "/tmp/key",
+        "-U",
+        "/tmp/data",
+    ];
+    assert!(matches!(
+        cli.command,
+        Some(Commands::SshSignHelper { ref args }) if args == &expected
+    ));
+}
+
+#[test]
+fn ssh_default_key_parses() {
+    let cli = parse(&["ssh-default-key"]);
+    assert!(matches!(cli.command, Some(Commands::SshDefaultKey)));
+}
+
+#[test]
+fn hidden_helpers_do_not_appear_in_help() {
+    // -- Setup & Fixtures
+    let mut command = Cli::command();
+
+    // -- Exec
+    let help = command.render_help().to_string();
+
+    // -- Check
+    assert!(!help.contains("ssh-sign-helper"), "help: {help}");
+    assert!(!help.contains("ssh-default-key"), "help: {help}");
+    assert!(help.contains("entry"), "the visible commands stay listed");
 }

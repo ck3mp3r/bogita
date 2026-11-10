@@ -21,7 +21,7 @@ fn token_value_slot_is_revealed_when_focused() {
 fn token_value_slot_is_masked_when_not_focused() {
     let mut form = add_form_named("GitHub");
     navigate_to_token_value_slot(&mut form);
-    form.handle_key(KeyCode::Tab); // move focus away to type slot
+    form.handle_key(KeyCode::BackTab); // move focus back to the type slot
     assert_eq!(form.focused_slot_label(), "type");
     assert!(
         !form.focused_value_is_revealed(),
@@ -32,7 +32,8 @@ fn token_value_slot_is_masked_when_not_focused() {
 #[test]
 fn plain_value_slot_is_never_revealed() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+')); // add field
+    add_field(&mut form); // add field
+    form.handle_key(KeyCode::Tab); // → type slot
     form.handle_key(KeyCode::Tab); // → plain value slot (Text)
     assert_eq!(form.focused_slot_label(), "value");
     assert!(
@@ -61,8 +62,7 @@ fn notes_type_label_is_notes() {
 #[test]
 fn notes_type_produces_text_field_value() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Tab); // → value
+    add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
     // Navigate to Notes (index 5): j=Username, j=Token, j=Totp, j=SshKey, j=Notes
@@ -71,15 +71,12 @@ fn notes_type_produces_text_field_value() {
     }
     form.handle_key(KeyCode::Enter); // confirm selection
     assert_eq!(form.field_badge(0), "notes");
-    form.handle_key(KeyCode::Tab); // → name (wraps from type)
-    form.handle_key(KeyCode::Tab); // → key
     form.handle_key(KeyCode::Tab); // → value (TextAreaState)
                                    // Type some text
     form.handle_key(KeyCode::Char('H'));
     form.handle_key(KeyCode::Char('i'));
     // Navigate to name to confirm
-    form.handle_key(KeyCode::Tab); // → type
-    form.handle_key(KeyCode::Tab); // → name
+    form.handle_key(KeyCode::Tab); // → name (wraps from value)
     let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
         panic!("expected Confirm");
     };
@@ -90,8 +87,7 @@ fn notes_type_produces_text_field_value() {
 #[test]
 fn notes_field_enter_inserts_newline_not_confirm() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Tab); // → value
+    add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
     // Navigate to Notes (index 5)
@@ -100,9 +96,6 @@ fn notes_field_enter_inserts_newline_not_confirm() {
     }
     form.handle_key(KeyCode::Enter); // confirm selection
     assert_eq!(form.field_badge(0), "notes");
-    // Navigate to value slot: type → name → key → value
-    form.handle_key(KeyCode::Tab); // → name
-    form.handle_key(KeyCode::Tab); // → key
     form.handle_key(KeyCode::Tab); // → value (TextAreaState)
                                    // Type "Hello" then Enter (should insert newline, not confirm)
     for c in "Hello".chars() {
@@ -119,8 +112,7 @@ fn notes_field_enter_inserts_newline_not_confirm() {
         form.handle_key(KeyCode::Char(c));
     }
     // Navigate to name to confirm
-    form.handle_key(KeyCode::Tab); // → type
-    form.handle_key(KeyCode::Tab); // → name
+    form.handle_key(KeyCode::Tab); // → name (wraps from value)
     let FormAction::Confirm(entry) = form.handle_key(KeyCode::Enter) else {
         panic!("expected Confirm");
     };
@@ -130,8 +122,7 @@ fn notes_field_enter_inserts_newline_not_confirm() {
 #[test]
 fn notes_field_esc_cancels_form() {
     let mut form = add_form_named("GitHub");
-    form.handle_key(KeyCode::Char('+'));
-    form.handle_key(KeyCode::Tab); // → value
+    add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
     // Navigate to Notes (index 5)
@@ -140,8 +131,6 @@ fn notes_field_esc_cancels_form() {
     }
     form.handle_key(KeyCode::Enter); // confirm selection
                                      // Navigate to value slot
-    form.handle_key(KeyCode::Tab); // → name
-    form.handle_key(KeyCode::Tab); // → key
     form.handle_key(KeyCode::Tab); // → value (TextAreaState)
                                    // Esc should return ConfirmDiscard (form is dirty)
     assert_eq!(form.handle_key(KeyCode::Esc), FormAction::ConfirmDiscard);
@@ -247,7 +236,7 @@ fn field_removal_adjusts_scroll() {
     for _ in 0..58 {
         form.handle_key(KeyCode::Tab);
     }
-    form.handle_key(KeyCode::Char('-'));
+    remove_field(&mut form);
     // After removal: 19 fields, max_scroll = 19-4 = 15.
     // scroll_offset was 16, now clamped to 15.
     assert_eq!(form.scroll_offset, 15);
@@ -259,7 +248,7 @@ fn add_field_scrolls_to_show_new_field() {
     form.last_visible_rows = 4;
     form.scroll_offset = 0;
     // Add a field — now 21 fields, 4 visible rows.
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     // scroll_offset = 21 - 4 = 17. Field 20 is at position 20-17=3 in [0,4).
     assert_eq!(form.scroll_offset, 17);
 }
@@ -304,7 +293,7 @@ fn non_empty_name_clears_error() {
 #[test]
 fn empty_field_key_shows_error_after_touch() {
     let mut form = EntryForm::new_add(Some("Test".to_string()));
-    form.handle_key(KeyCode::Char('+')); // add field
+    add_field(&mut form); // add field
     form.handle_key(KeyCode::Char('a')); // type in key (marks touched)
     form.handle_key(KeyCode::Backspace); // delete it — now empty but touched
     assert!(form
@@ -316,11 +305,11 @@ fn empty_field_key_shows_error_after_touch() {
 #[test]
 fn duplicate_keys_shown_as_error() {
     let mut form = EntryForm::new_add(Some("Test".to_string()));
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     for c in "key1".chars() {
         form.handle_key(KeyCode::Char(c));
     }
-    form.handle_key(KeyCode::Char('+'));
+    add_field(&mut form);
     for c in "key1".chars() {
         form.handle_key(KeyCode::Char(c));
     }
@@ -348,7 +337,7 @@ fn confirm_without_errors_succeeds() {
 #[test]
 fn newly_added_field_not_immediately_invalid() {
     let mut form = EntryForm::new_add(Some("Test".to_string()));
-    form.handle_key(KeyCode::Char('+')); // add field, don't type in key
+    add_field(&mut form); // add field, don't type in key
     assert!(
         !form
             .validation_errors()

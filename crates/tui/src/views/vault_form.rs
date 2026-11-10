@@ -1,7 +1,8 @@
 //! Vault creation form view.
 
+use super::inserts_text;
 use bogita_core::domain::Vault;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
@@ -40,6 +41,28 @@ impl VaultForm {
     }
 
     pub fn handle_key(&mut self, key: KeyCode) -> VaultFormAction {
+        self.handle_key_with_modifiers(key, KeyModifiers::NONE)
+    }
+
+    /// Insert a bracketed-paste payload into the vault name.
+    ///
+    /// The name is a single line, so the caller hands over an already
+    /// flattened payload.
+    pub fn handle_paste(&mut self, text: &str) {
+        if self.name_focused {
+            self.name.push_str(text);
+        }
+    }
+
+    /// Handle a key press with its modifiers.
+    ///
+    /// Only unmodified printable chars insert text; `Alt-t` toggles the default
+    /// checkbox and Space keeps its text meaning in the name field.
+    pub fn handle_key_with_modifiers(
+        &mut self,
+        key: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> VaultFormAction {
         if self.name_focused {
             match key {
                 KeyCode::Enter => self.confirm(),
@@ -52,7 +75,7 @@ impl VaultForm {
                     self.name.pop();
                     VaultFormAction::None
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Char(c) if inserts_text(modifiers) => {
                     self.name.push(c);
                     VaultFormAction::None
                 }
@@ -66,7 +89,7 @@ impl VaultForm {
                     self.name_focused = true;
                     VaultFormAction::None
                 }
-                KeyCode::Char(' ') => {
+                KeyCode::Char('t') if modifiers == KeyModifiers::ALT => {
                     self.is_default = !self.is_default;
                     VaultFormAction::None
                 }
@@ -137,3 +160,9 @@ impl VaultForm {
         );
     }
 }
+
+// region:    --- Tests
+#[cfg(test)]
+#[path = "../../test/views/vault_form.rs"]
+mod vault_form_test;
+// endregion: --- Tests

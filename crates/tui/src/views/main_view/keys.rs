@@ -2,13 +2,41 @@
 
 use super::actions::{Column, MainViewAction};
 use super::state::MainView;
+use crate::views::inserts_text;
 use bogita_core::domain::FieldValue;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 impl MainView {
     // ── key handling ─────────────────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyCode) -> MainViewAction {
+        self.handle_key_with_modifiers(key, KeyModifiers::NONE)
+    }
+
+    /// Insert a bracketed-paste payload into the search query.
+    ///
+    /// The query is single-line and lowercased like its typed input, so the
+    /// caller hands over an already flattened payload. A paste outside the
+    /// open search bar is inert.
+    pub fn handle_paste(&mut self, text: &str) {
+        if !self.searching {
+            return;
+        }
+        for c in text.chars() {
+            self.search_query.push(c.to_lowercase().next().unwrap_or(c));
+        }
+        self.reset_entry_selection();
+    }
+
+    /// Handle a key press with its modifiers.
+    ///
+    /// The search box inserts only unmodified printable chars, so Ctrl and Alt
+    /// chords stay available to the app instead of leaking into the query.
+    pub fn handle_key_with_modifiers(
+        &mut self,
+        key: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> MainViewAction {
         // Vault picker dropdown — intercept all keys when open.
         if self.vault_picker_open {
             return self.handle_vault_picker_key(key);
@@ -30,7 +58,7 @@ impl MainView {
                     self.search_query.pop();
                     self.reset_entry_selection();
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Char(c) if inserts_text(modifiers) => {
                     self.search_query.push(c.to_lowercase().next().unwrap_or(c));
                     self.reset_entry_selection();
                 }

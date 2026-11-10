@@ -24,3 +24,5 @@ bogita-cli = { path = "../cli" }
 bogita-tui = { path = "../tui" }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros"] }
 clap = { version = "4", features = ["derive"] }
+rpassword = "=7.4.0"
+zeroize = "1.9"

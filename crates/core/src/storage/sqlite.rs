@@ -7,9 +7,13 @@ use crate::error::{DbError, Error, Result};
 use crate::ports::Crypto;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
+
+/// Busy timeout used by the long-lived agent daemon connection.
+const DAEMON_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQLite storage adapter with field-level encryption
 #[derive(Clone)]
@@ -30,9 +34,31 @@ where
     ///
     /// Creates the database file and runs migrations if needed.
     pub async fn new(db_path: impl AsRef<Path>, crypto: C) -> Result<Self> {
+        Self::open(db_path, crypto, |options| options).await
+    }
+
+    /// Create the adapter for the agent daemon's long-lived connection.
+    ///
+    /// Enables WAL journaling and a 5 s busy timeout so the daemon's reads
+    /// coexist with TUI writers instead of failing with `SQLITE_BUSY`. Both
+    /// settings are per-connection pragmas: no schema or migration change.
+    pub async fn new_daemon(db_path: impl AsRef<Path>, crypto: C) -> Result<Self> {
+        Self::open(db_path, crypto, |options| {
+            options
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(DAEMON_BUSY_TIMEOUT)
+        })
+        .await
+    }
+
+    async fn open(
+        db_path: impl AsRef<Path>,
+        crypto: C,
+        tune: impl FnOnce(SqliteConnectOptions) -> SqliteConnectOptions,
+    ) -> Result<Self> {
         // Create parent directory if it doesn't exist
         if let Some(parent) = db_path.as_ref().parent() {
-            std::fs::create_dir_all(parent)?;
+            crate::storage::config::ensure_private_dir(parent)?;
         }
 
         // Connect to SQLite database
@@ -40,6 +66,7 @@ where
             SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.as_ref().display()))
                 .map_err(|e| DbError::ConnectionFailed(e.to_string()))?
                 .create_if_missing(true);
+        let options = tune(options);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)

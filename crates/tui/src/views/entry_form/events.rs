@@ -7,8 +7,9 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
 };
 
-use super::field::{FormAction, FormField, FormFieldType, SlotKind};
+use super::field::{FormAction, FormField, FormFieldType, FormMode, SlotKind};
 use super::EntryForm;
+use crate::views::{normalize_paste, paste_to_single_line};
 
 impl EntryForm {
     // ── key handling ──────────────────────────────────────────────────────────
@@ -17,8 +18,8 @@ impl EntryForm {
     /// `app.rs` and all tests work unchanged.
     ///
     /// Converts BackTab → Tab+SHIFT so rat-focus can match it. All other
-    /// modifiers are stripped. Ctrl-r reveal toggle is NOT handled here —
-    /// use `handle_key_with_modifiers` for that.
+    /// modifiers are stripped. Alt chords are NOT handled here —
+    /// use `handle_key_with_modifiers` for those.
     pub fn handle_key(&mut self, key: KeyCode) -> FormAction {
         let modifiers = match key {
             KeyCode::BackTab => KeyModifiers::SHIFT,
@@ -28,7 +29,7 @@ impl EntryForm {
     }
 
     /// Handle a key event with full modifier info.
-    /// Used by app.rs to pass Ctrl-r for toggle reveal.
+    /// Used by app.rs to pass the Alt management chords.
     pub fn handle_key_with_modifiers(
         &mut self,
         key: KeyCode,
@@ -46,6 +47,42 @@ impl EntryForm {
 
     // ── HandleEvent implementation ───────────────────────────────────────────
 
+    /// Insert a bracketed-paste payload into the focused slot.
+    ///
+    /// Newline policy: the Notes textarea and an SshKey value keep their line
+    /// structure (normalized to LF); every other slot is single-line, so each
+    /// break becomes one space. Popup and type slots take no text at all.
+    pub fn handle_paste(&mut self, text: &str) {
+        let payload = match self.focused_slot() {
+            SlotKind::Name | SlotKind::Key(_) => paste_to_single_line(text),
+            SlotKind::Type(_) => return,
+            SlotKind::Value(i) => {
+                let keeps_newlines = self.fields.get(i).is_some_and(|f| {
+                    f.field_type == FormFieldType::Notes || f.field_type == FormFieldType::SshKey
+                });
+                if keeps_newlines {
+                    normalize_paste(text)
+                } else {
+                    paste_to_single_line(text)
+                }
+            }
+        };
+        let _ = self.handle(&Event::Paste(payload), Regular);
+    }
+
+    /// The action an Esc press reports from any slot.
+    ///
+    /// A dirty add form warns before throwing away what the user typed. An edit
+    /// form never discards on Esc: `Cancel` reaches the caller, which opens the
+    /// save/discard modal so the user still gets a save choice.
+    fn esc_action(&self) -> FormAction {
+        if self.mode() == FormMode::Add && self.is_dirty() {
+            FormAction::ConfirmDiscard
+        } else {
+            FormAction::Cancel
+        }
+    }
+
     /// Route an event to the appropriate slot handler based on focus.
     /// Structured for future delegation to rat-widget widgets.
     fn handle_event_inner(&mut self, event: &Event) -> Outcome {
@@ -53,14 +90,63 @@ impl EntryForm {
         // and confirm() has up-to-date validation_errors.
         self.validate();
 
-        // Ctrl-V opens the vault picker from anywhere in the form.
+        // Alt chords are management actions. Unmodified printable keys and Space
+        // belong to the focused input, so they are never intercepted here.
         if let Event::Key(ke) = event {
-            if ke.kind == KeyEventKind::Press
-                && ke.code == KeyCode::Char('v')
-                && ke.modifiers.contains(KeyModifiers::CONTROL)
-            {
-                self.pending_action = FormAction::OpenVaultPicker;
-                return Outcome::Changed;
+            if ke.kind == KeyEventKind::Press && ke.modifiers.contains(KeyModifiers::ALT) {
+                match ke.code {
+                    KeyCode::Char('s') => {
+                        self.pending_action = self.confirm();
+                        return Outcome::Changed;
+                    }
+                    KeyCode::Char('v') => {
+                        self.pending_action = FormAction::OpenVaultPicker;
+                        return Outcome::Changed;
+                    }
+                    KeyCode::Char('n') => {
+                        self.add_field();
+                        return Outcome::Changed;
+                    }
+                    KeyCode::Char('d') => {
+                        self.remove_focused_field();
+                        return Outcome::Changed;
+                    }
+                    KeyCode::Char('r') => {
+                        if let SlotKind::Value(i) = self.focused_slot() {
+                            if self
+                                .fields
+                                .get(i)
+                                .is_some_and(|f| f.field_type.is_obscured())
+                            {
+                                if self.revealed_secret_fields.contains(&i) {
+                                    self.revealed_secret_fields.remove(&i);
+                                } else {
+                                    self.revealed_secret_fields.insert(i);
+                                }
+                            }
+                        }
+                        return Outcome::Changed;
+                    }
+                    KeyCode::Char('t') => {
+                        if let SlotKind::Value(i) = self.focused_slot() {
+                            let is_boolean = self.fields.get(i).is_some_and(|f| {
+                                f.is_agent_servable() || f.field_type == FormFieldType::Boolean
+                            });
+                            if is_boolean {
+                                if let Some(f) = self.fields.get_mut(i) {
+                                    let sense =
+                                        FormFieldType::parse_agent_servable(f.value_state.text())
+                                            .unwrap_or(false);
+                                    let text = if sense { "false" } else { "true" };
+                                    f.value_state.set_text(text);
+                                    f.value_state.set_cursor(f.value_state.len(), false);
+                                }
+                            }
+                        }
+                        return Outcome::Changed;
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -83,6 +169,9 @@ impl EntryForm {
                     self.sync_reveal_state();
                     self.auto_scroll_after_tab();
                     self.sync_cursor_after_tab();
+                    // Focus is an input to validation: leaving a slot decides
+                    // whether a half-typed value is still allowed.
+                    self.validate();
                     return Outcome::Changed;
                 }
                 if (ke.code == KeyCode::BackTab || is_shift_tab)
@@ -91,6 +180,7 @@ impl EntryForm {
                     self.sync_reveal_state();
                     self.auto_scroll_after_tab();
                     self.sync_cursor_after_tab();
+                    self.validate();
                     return Outcome::Changed;
                 }
             }
@@ -113,11 +203,7 @@ impl EntryForm {
             if ke.kind == KeyEventKind::Press {
                 match ke.code {
                     KeyCode::Esc => {
-                        self.pending_action = if self.is_dirty() {
-                            FormAction::ConfirmDiscard
-                        } else {
-                            FormAction::Cancel
-                        };
+                        self.pending_action = self.esc_action();
                         self.revealed_secret_fields.clear();
                         return Outcome::Changed;
                     }
@@ -125,11 +211,6 @@ impl EntryForm {
                         self.pending_action = self.confirm();
                         return Outcome::Changed;
                     }
-                    KeyCode::Char('+') => {
-                        self.add_field();
-                        return Outcome::Changed;
-                    }
-                    KeyCode::Char('-') => return Outcome::Continue,
                     _ => {}
                 }
             }
@@ -141,11 +222,12 @@ impl EntryForm {
     ///
     /// 1. Popup open → delegate ALL events to ChoiceState, then sync field_type
     ///    after popup closes. Return early.
-    /// 2. Popup closed → intercept form-level keys (Esc=cancel, Enter=confirm,
-    ///    +=add_field, -=remove_field). Return early on match.
+    /// 2. Popup closed → intercept form-level keys (Esc=cancel, Enter=open popup).
+    ///    Return early on match.
     /// 3. Popup closed → handle j/k/Up/Down with wrapping (ChoiceState treats j/k
     ///    as character search, so we handle them ourselves). Return early on match.
-    /// 4. Popup closed → delegate remaining events to ChoiceState (Space toggles popup).
+    /// 4. Popup closed → swallow everything else: Space and printable chars must
+    ///    not reach `ChoiceState::select_by_char`.
     fn handle_type_event(&mut self, event: &Event, idx: usize) -> Outcome {
         // 1. If popup is open, handle navigation and delegation
         if idx < self.fields.len() && self.fields[idx].type_state.is_popup_active() {
@@ -200,24 +282,15 @@ impl EntryForm {
             if ke.kind == KeyEventKind::Press {
                 match ke.code {
                     KeyCode::Esc => {
-                        self.pending_action = if self.is_dirty() {
-                            FormAction::ConfirmDiscard
-                        } else {
-                            FormAction::Cancel
-                        };
+                        self.pending_action = self.esc_action();
                         self.revealed_secret_fields.clear();
                         return Outcome::Changed;
                     }
+                    // The type selector is a picker, not a text cell: Enter opens it.
                     KeyCode::Enter => {
-                        self.pending_action = self.confirm();
-                        return Outcome::Changed;
-                    }
-                    KeyCode::Char('+') => {
-                        self.add_field();
-                        return Outcome::Changed;
-                    }
-                    KeyCode::Char('-') => {
-                        self.remove_focused_field();
+                        if let Some(f) = self.fields.get_mut(idx) {
+                            f.type_state.set_popup_active(true);
+                        }
                         return Outcome::Changed;
                     }
                     _ => {}
@@ -259,10 +332,7 @@ impl EntryForm {
             }
         }
 
-        // 4. Delegate remaining events to ChoiceState (Space toggles popup)
-        if let Some(f) = self.fields.get_mut(idx) {
-            let _: ChoiceOutcome = f.type_state.handle(event, Regular);
-        }
+        // 4. Popup closed — Space and printable chars type nothing on this cell.
         Outcome::Changed
     }
 
@@ -277,11 +347,7 @@ impl EntryForm {
                     if let Some(state) = f.textarea_state.as_mut() {
                         if matches!(event, Event::Key(ke) if ke.kind == KeyEventKind::Press && ke.code == KeyCode::Esc)
                         {
-                            self.pending_action = if self.is_dirty() {
-                                FormAction::ConfirmDiscard
-                            } else {
-                                FormAction::Cancel
-                            };
+                            self.pending_action = self.esc_action();
                             self.revealed_secret_fields.clear();
                             return Outcome::Changed;
                         }
@@ -297,11 +363,7 @@ impl EntryForm {
             if ke.kind == KeyEventKind::Press {
                 match ke.code {
                     KeyCode::Esc => {
-                        self.pending_action = if self.is_dirty() {
-                            FormAction::ConfirmDiscard
-                        } else {
-                            FormAction::Cancel
-                        };
+                        self.pending_action = self.esc_action();
                         self.revealed_secret_fields.clear();
                         return Outcome::Changed;
                     }
@@ -309,31 +371,20 @@ impl EntryForm {
                         self.pending_action = self.confirm();
                         return Outcome::Changed;
                     }
-                    KeyCode::Char('+') if matches!(slot, SlotKind::Key(_)) => {
-                        self.add_field();
-                        return Outcome::Changed;
-                    }
-                    KeyCode::Char('-') if matches!(slot, SlotKind::Key(_)) => {
-                        self.remove_focused_field();
-                        return Outcome::Changed;
-                    }
-                    // Ctrl-r toggles reveal on the currently focused obscured value slot
-                    KeyCode::Char('r') if ke.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if let SlotKind::Value(i) = slot {
-                            if let Some(f) = self.fields.get(i) {
-                                if f.field_type.is_obscured() {
-                                    if self.revealed_secret_fields.contains(&i) {
-                                        self.revealed_secret_fields.remove(&i);
-                                    } else {
-                                        self.revealed_secret_fields.insert(i);
-                                    }
-                                    return Outcome::Changed;
-                                }
-                            }
-                        }
-                    }
                     _ => {}
                 }
+            }
+        }
+
+        // The agent-servable row holds a boolean, not text: no key edits the cell
+        // as free text, and Alt-t is the only way to flip the sense.
+        if let SlotKind::Value(i) = slot {
+            if self
+                .fields
+                .get(i)
+                .is_some_and(|f| f.is_agent_servable() || f.field_type == FormFieldType::Boolean)
+            {
+                return Outcome::Changed;
             }
         }
 

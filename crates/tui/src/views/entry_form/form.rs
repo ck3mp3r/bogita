@@ -1,6 +1,6 @@
 //! `EntryForm` state, constructors, and public accessors.
 
-use bogita_core::domain::{Entry, FieldValue};
+use bogita_core::domain::{Entry, EntryType, FieldType, FieldValue, AGENT_SERVABLE_KEY};
 use rat_focus::Focus;
 use rat_widget::choice::ChoiceState;
 use rat_widget::text_input::TextInputState;
@@ -16,6 +16,7 @@ use super::field::{FormAction, FormField, FormFieldType, FormMode, ValidationIss
 pub struct EntryForm {
     pub(super) mode: FormMode,
     pub(super) entry_id: Uuid,
+    pub(super) entry_type: EntryType,
     pub(super) vault_id: Uuid,
     pub(super) vault_name: String,
     pub(super) name_state: TextInputState,
@@ -33,7 +34,7 @@ pub struct EntryForm {
     pub(crate) last_visible_rows: usize,
     /// Indices of fields whose secret value is currently shown in plaintext.
     /// Auto-revealed on focus, auto-unrevealed on focus leave.
-    /// Can be toggled manually with Ctrl-r.
+    /// Can be toggled manually with Alt-r.
     pub(crate) revealed_secret_fields: HashSet<usize>,
     /// Snapshot of the original entry for dirty-state tracking.
     /// `None` for Add mode; `Some((name, fields))` for Edit mode.
@@ -54,6 +55,7 @@ impl EntryForm {
         Self {
             mode: FormMode::Add,
             entry_id: Uuid::new_v4(),
+            entry_type: EntryType::Token,
             vault_id: Uuid::nil(),
             vault_name: String::new(),
             name_state,
@@ -83,6 +85,8 @@ impl EntryForm {
                     FieldValue::Date(ts) => ts.to_string(),
                 };
                 let field_type = FormFieldType::from_domain(&f.field_type);
+                let agent_servable = f.key == AGENT_SERVABLE_KEY
+                    || f.field_type == FieldType::Custom(AGENT_SERVABLE_KEY.to_string());
                 let mut key_state = TextInputState::named("key");
                 key_state.set_text(&f.key);
                 key_state.set_cursor(key_state.len(), false);
@@ -105,6 +109,7 @@ impl EntryForm {
                     type_state,
                     textarea_state,
                     touched: true,
+                    agent_servable,
                 }
             })
             .collect();
@@ -140,6 +145,7 @@ impl EntryForm {
         Self {
             mode: FormMode::Edit,
             entry_id: entry.id,
+            entry_type: entry.entry_type.clone(),
             vault_id: entry.vault_id,
             vault_name: String::new(),
             name_state,
@@ -260,6 +266,11 @@ impl EntryForm {
         false
     }
 
+    /// `true` when the form edits an entry of type [`EntryType::SshKey`].
+    pub fn is_ssh_key(&self) -> bool {
+        self.entry_type == EntryType::SshKey
+    }
+
     /// Human-readable label for the currently focused slot.
     ///
     /// - `"name"` when on the name slot.
@@ -294,8 +305,8 @@ impl EntryForm {
         "name"
     }
 
-    /// Badge string for field at `index` — returns the `FormFieldType` label,
-    /// or `""` if index is out of bounds.
+    /// Badge string for field at `index` — the row's field type label, or `""`
+    /// if index is out of bounds.
     pub fn field_badge(&self, index: usize) -> &'static str {
         match self.fields.get(index) {
             Some(f) => f.field_type.label(),
@@ -348,7 +359,7 @@ impl EntryForm {
     }
 
     /// Get the current text value of a field, handling TextAreaState for Notes.
-    fn field_value_text(&self, f: &FormField) -> String {
+    pub(super) fn field_value_text(&self, f: &FormField) -> String {
         if let Some(state) = f.textarea_state.as_ref() {
             state.text().to_string()
         } else {
