@@ -5,12 +5,17 @@
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+use super::security_support::FixedSource;
 use crate::agent::client;
 use crate::agent::control::GRACEFUL_DRAIN;
 use crate::agent::error::SshAgentError;
 use crate::agent::keyring::KeyRing;
-use crate::agent::server::{serve, serve_with_signals, SharedKeyRing};
+use crate::agent::server::{serve, serve_with_lock, serve_with_signals, SharedKeyRing};
+use crate::agent::unlock::VaultLock;
 use crate::domain::ssh::{agent_servable_field, SshKeyMaterial};
+use crate::domain::{AgeIdentity, Entry, SecretString};
+use crate::ports::EncryptedIdentityFile;
+use crate::storage::identity::write_identity_encrypted;
 use crate::test_support::test_entry;
 use ssh_agent_lib::agent::Session;
 use ssh_agent_lib::proto::{Extension, Request, Response};
@@ -74,6 +79,14 @@ fn unknown_extension() -> Extension {
         name: "bogita-keys@bogita".to_string(),
         details: Vec::new().into(),
     }
+}
+
+/// One servable ed25519 entry: the ring caches it only with the opt-in gate set.
+fn servable_entries(material: &SshKeyMaterial) -> Vec<Entry> {
+    let mut fields = material.to_fields();
+    let idx = fields.len() as i32;
+    fields.push(agent_servable_field(true, idx));
+    vec![test_entry(Uuid::new_v4(), "rpc", fields)]
 }
 
 // endregion: --- Fixtures
@@ -280,7 +293,11 @@ async fn test_agent_control_sigint_stops_and_unlinks_socket() -> Result<()> {
     // -- Setup & Fixtures
     let dir = tempfile::tempdir()?;
     let socket_path = temp_socket(&dir);
-    let server = tokio::spawn(serve_with_signals(locked_ring(), socket_path.clone()));
+    let server = tokio::spawn(serve_with_signals(
+        locked_ring(),
+        socket_path.clone(),
+        Arc::new(crate::agent::NoLock),
+    ));
     wait_for_socket(&socket_path).await?;
 
     // -- Exec
@@ -300,6 +317,80 @@ async fn test_agent_control_sigint_stops_and_unlinks_socket() -> Result<()> {
 }
 
 // endregion: --- Signals
+
+// region:    --- Lock round-trip
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_agent_control_unlock_and_lock_round_trip() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let socket_path = temp_socket(&dir);
+    let material = SshKeyMaterial::keygen_ed25519("rpc@example.com")?;
+    let passphrase = SecretString::from("rpc passphrase");
+    let identity_path = dir.path().join("identity.age");
+    write_identity_encrypted(&AgeIdentity::generate(), &passphrase, &identity_path)?;
+    let ring: SharedKeyRing = Arc::new(Mutex::new(KeyRing::new()));
+    let lock = Arc::new(VaultLock::new(
+        identity_path,
+        EncryptedIdentityFile,
+        FixedSource::new(servable_entries(&material)),
+        Arc::clone(&ring),
+    ));
+    let server = tokio::spawn(serve_with_lock(
+        Arc::clone(&ring),
+        socket_path.clone(),
+        lock,
+    ));
+    wait_for_socket(&socket_path).await?;
+
+    // -- Exec: a wrong passphrase
+    let refused = client::unlock(&socket_path, &SecretString::from("wrong passphrase"));
+
+    // -- Check: the refusal is typed and the ring stays locked
+    assert!(matches!(refused, Err(SshAgentError::UnlockRefused)));
+    assert_eq!(
+        client::status(&socket_path)?,
+        Some("0 keys, locked".to_string())
+    );
+
+    // -- Exec: the right passphrase
+    client::unlock(&socket_path, &passphrase)?;
+    let mut client =
+        ssh_agent_lib::client::Client::new(tokio::net::UnixStream::connect(&socket_path).await?);
+    let listed = client.handle(Request::RequestIdentities).await?;
+
+    // -- Check: IDENTITIES_ANSWER advertises the vault key and the status moves on
+    let Response::IdentitiesAnswer(identities) = listed else {
+        return Err(format!("expected identities answer, got {listed:?}").into());
+    };
+    assert_eq!(identities.len(), 1);
+    assert_eq!(identities[0].comment, "rpc@example.com");
+    assert_eq!(
+        client::status(&socket_path)?,
+        Some("1 keys, unlocked".to_string())
+    );
+
+    // -- Exec: lock, then ask again on the same connection
+    client::lock(&socket_path)?;
+    let listed_locked = client.handle(Request::RequestIdentities).await?;
+    let refused_unknown = client
+        .handle(Request::Extension(unknown_extension()))
+        .await?;
+
+    // -- Check: the lock evicts the ring and the wire refusals stay typed
+    assert_eq!(listed_locked, Response::Failure);
+    assert_eq!(refused_unknown, Response::ExtensionFailure);
+    assert_eq!(
+        client::status(&socket_path)?,
+        Some("0 keys, locked".to_string())
+    );
+
+    client::stop(&socket_path)?;
+    let _ = tokio::time::timeout(Duration::from_secs(6), server).await??;
+    Ok(())
+}
+
+// endregion: --- Lock round-trip
 
 // region:    --- Refusals
 

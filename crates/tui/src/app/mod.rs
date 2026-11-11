@@ -56,6 +56,9 @@ mod app_lock_screen_input_test;
 #[path = "../../test/app/lock_screen_render.rs"]
 mod app_lock_screen_render_test;
 #[cfg(all(test, feature = "integration"))]
+#[path = "../../test/app/lock_state.rs"]
+mod app_lock_state_test;
+#[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/main_and_navigation.rs"]
 mod app_main_and_navigation_test;
 #[cfg(all(test, feature = "integration"))]

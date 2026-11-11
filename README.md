@@ -20,13 +20,16 @@ bogita vault unlock --password-file ~/.pass-bogita   # a file the owner alone ca
   `chmod 600 <path>`.
 
 Only one source at a time: two are a usage error. A flag source never prompts, and every
-failure goes to stderr with a non-zero exit code. The unlocked identity is staged in the
-keychain exactly as the prompt path stages it, so `bogita agent start` works afterwards.
+failure goes to stderr with a non-zero exit code. The unlock is a request to the agent
+daemon: the passphrase derives the identity inside the daemon, which keeps it in memory and
+rebuilds its key ring. Nothing is written anywhere else, and a daemon that is not running is
+started first, so `bogita agent` works afterwards.
 
 ## SSH agent
 
 Bogita serves vault-held SSH keys over its own agent socket (RFC 9987); keys are never
-exported. The daemon reads the staged identity from the keychain, so unlock first.
+exported. The daemon boots locked and holds no identity until `bogita unlock` asks it to
+derive one, so unlock first.
 
 ```sh
 bogita unlock
@@ -69,13 +72,16 @@ git config --global gpg.ssh.defaultKeyCommand "/path/to/bogita ssh-default-key"
 - `gpg.ssh.program` holds one pathname: git execs the whole value, so the binary answers
   git's `-Y` line itself. `user.signingKey` takes the line `bogita entry pubkey` prints.
 - `gpg.ssh.defaultKeyCommand` is optional; git runs it through a shell, so quote a path
-  with spaces. It prints the only agent-servable key, else fails with `no agent-servable
+  with spaces. It prints the only key the agent serves, else fails with `no agent-servable
   keys` or `multiple agent-servable keys; set user.signingKey`.
-- Signing uses the matching vault key; verify is forwarded to `ssh-keygen` unchanged, so
-  `allowed_signers` stays OpenSSH's. `git log --show-signature` shows the SSHSIG; a locked
-  vault never prompts and exits 1 with `vault is locked; run bogita unlock`.
+- Sign and verify both run against the agent daemon: the helper asks the daemon for the
+  signature and holds no key, so `git commit -S` needs an unlocked daemon. Verify is
+  forwarded to `ssh-keygen` unchanged, so `allowed_signers` stays OpenSSH's. A locked
+  vault or a stopped daemon never prompts and exits 1 with `vault is locked; run bogita
+  unlock`. A key the daemon does not serve exits 1 with `no vault key matches
+  user.signingKey`.
 
-Daemon running: SSH logins AND git signing via SSH_AUTH_SOCK. Daemon off but vault unlocked: git commits via the gpg.ssh.program helper. Vault locked: neither — run bogita unlock first.
+Daemon running and vault unlocked: SSH logins via SSH_AUTH_SOCK, and git commits. Vault locked or daemon off: neither — run bogita unlock first.
 
 **Upgrade note**
 The agent takes care of its data dir: it creates it 0700, narrows a pre-existing mode that
@@ -97,8 +103,8 @@ when the narrowing does not take hold. No manual `chmod` is needed.
 - Keys live in a local, age-encrypted vault with no subscription. Bogita is not a
   feature-parity replacement for 1Password.
 - `SIGKILL` (`kill -9`) and equivalent cannot lock the vault — use `bogita lock` or the
-  auto-lock timer. Every catchable exit locks: the TUI deletes the staged identity when it
-  quits (q, Ctrl-C, or SIGINT/SIGHUP/SIGTERM), and exits 3 with a stderr warning when that
-  lock itself fails.
+  auto-lock timer. Every catchable exit locks: the TUI drives the embedded vault service, so it
+  drops the held identity when it quits (q, Ctrl-C, or SIGINT/SIGHUP/SIGTERM) and sends the
+  daemon a lock request, which stops the daemon serving keys too.
 
 Architecture, protocol and lock semantics: see AGENTS.md, "SSH Agent daemon".

@@ -3,19 +3,15 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 use crate::app::Tui;
 use crate::context::TuiContext;
 use bogita_core::domain::SshKeyMaterial;
-use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
-use bogita_core::test_support::MockKeychain;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::Terminal;
 
-use super::support::make_app;
+use super::support::{make_app, TestService};
 
 /// Draw the whole app and flatten the screen, so a test can assert what the
 /// user actually sees (the footer is constant now; feedback lives in the form).
-fn rendered(
-    tui: &mut Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>,
-) -> Result<String> {
+fn rendered(tui: &mut Tui<TestService>) -> Result<String> {
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
     terminal.draw(|frame| tui.render(frame))?;
     Ok(terminal
@@ -28,7 +24,7 @@ fn rendered(
 }
 
 /// Open an add form with one SshKey row focused on its value slot.
-async fn ssh_value_form(tui: &mut Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>) {
+async fn ssh_value_form(tui: &mut Tui<TestService>) {
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
     for c in "Deploy key".chars() {

@@ -2,9 +2,9 @@
 
 use super::tui::{ActiveView, Tui};
 use crate::views::paste_to_single_line;
-use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
+use bogita_core::agent::VaultService;
 
-impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
+impl<V: VaultService> Tui<V> {
     /// Route one bracketed-paste payload to the focused surface.
     ///
     /// The payload arrives atomically, so no key event can fire mid-paste. The

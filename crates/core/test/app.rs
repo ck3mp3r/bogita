@@ -3,11 +3,10 @@ use crate::app::{App, InitResult};
 use crate::crypto::age::AgeCrypto;
 use crate::domain::AgeIdentity;
 use crate::ports::{EncryptedIdentityFile, SqliteStorageFactory, VaultStorageFactory};
-use crate::session::Session;
 use crate::storage::config::AppConfig;
 use crate::storage::identity::write_identity_encrypted;
 use crate::storage::sqlite::SqliteStorage;
-use crate::test_support::{test_vault_with, MockKeychain};
+use crate::test_support::test_vault_with;
 use crate::vault::registry::VaultRegistry;
 use secrecy::SecretString;
 use serial_test::serial;
@@ -18,7 +17,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-type TestApp = App<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>;
+type TestApp = App<SqliteStorageFactory, EncryptedIdentityFile>;
 
 /// Redirect HOME and XDG dirs to `dir` for the duration of the test.
 /// Returns the TempDir so it stays alive for the test body.
@@ -29,8 +28,7 @@ fn redirect_xdg(dir: &TempDir) {
 }
 
 /// Build a fully-initialized App for testing, bypassing App::init().
-/// Creates an encrypted identity, a Personal vault, and stores the identity
-/// in the keychain.
+/// Creates an encrypted identity and a Personal vault.
 async fn make_test_app(passphrase: &SecretString) -> Result<TestApp> {
     // -- Setup & Fixtures
     let dir = TempDir::new()?;
@@ -53,11 +51,7 @@ async fn make_test_app(passphrase: &SecretString) -> Result<TestApp> {
     );
     registry.add_vault(&vault).await?;
 
-    let kc = MockKeychain::new();
-    let session = Session::new(kc);
-    session.store_identity(&identity)?;
-
-    // Save the config so App::init_with_keychain() can find it
+    // Save the config so App::init_with() can find it
     AppConfig::default().save(&AppConfig::default_path())?;
 
     // -- Exec & Check
@@ -65,7 +59,6 @@ async fn make_test_app(passphrase: &SecretString) -> Result<TestApp> {
         config: AppConfig::default(),
         identity: Some(identity),
         registry,
-        session,
         is_locked: false,
         lock_timeout: None,
         identity_store: EncryptedIdentityFile,
@@ -80,8 +73,7 @@ async fn first_run_returns_needs_passphrase() -> Result<()> {
     redirect_xdg(&dir);
 
     // -- Exec
-    let kc = MockKeychain::new();
-    let result = App::init_with(kc, SqliteStorageFactory, EncryptedIdentityFile).await;
+    let result = App::init_with(SqliteStorageFactory, EncryptedIdentityFile).await;
 
     // -- Check
     assert!(
@@ -120,7 +112,7 @@ async fn complete_first_run_creates_config_identity_and_personal_vault() -> Resu
 
 #[tokio::test]
 #[serial]
-async fn second_init_returns_locked_when_keychain_empty() -> Result<()> {
+async fn second_init_returns_locked_and_unlock_keeps_the_identity() -> Result<()> {
     // -- Setup & Fixtures
     let dir = TempDir::new()?;
     redirect_xdg(&dir);
@@ -133,13 +125,10 @@ async fn second_init_returns_locked_when_keychain_empty() -> Result<()> {
         .ok_or("should have identity")?
         .to_recipient()
         .to_string();
+    drop(app1);
 
-    // Clear the keychain to simulate a fresh process
-    app1.session.lock()?;
-
-    // -- Exec
-    let kc = MockKeychain::new();
-    let result = App::init_with(kc, SqliteStorageFactory, EncryptedIdentityFile).await;
+    // -- Exec: a second boot in a fresh process state
+    let result = App::init_with(SqliteStorageFactory, EncryptedIdentityFile).await;
 
     // -- Check
     match result {
@@ -157,7 +146,7 @@ async fn second_init_returns_locked_when_keychain_empty() -> Result<()> {
                 "identity must not change on second init"
             );
         }
-        _ => panic!("expected Locked when keychain is empty"),
+        _ => panic!("expected Locked on a boot with an existing identity file"),
     }
     Ok(())
 }
@@ -184,50 +173,11 @@ async fn personal_vault_is_default_and_sqlite_backed() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn lock_and_unlock_round_trip() -> Result<()> {
-    // -- Setup & Fixtures
-    let dir = TempDir::new()?;
-    let identity = AgeIdentity::generate();
-    let passphrase = SecretString::from("test passphrase");
-    let identity_path = dir.path().join("identity.age");
-    write_identity_encrypted(&identity, &passphrase, &identity_path)?;
-
-    let db_path = dir.path().join("test.db");
-    let storage = SqliteStorage::new(&db_path, AgeCrypto).await?;
-    let registry = VaultRegistry::new(storage);
-    let kc = MockKeychain::new();
-    let session = Session::new(kc);
-    let mut app: TestApp = App {
-        config: AppConfig {
-            identity_path: Some(identity_path.clone()),
-            ..AppConfig::default()
-        },
-        identity: Some(identity),
-        registry,
-        session,
-        is_locked: false,
-        lock_timeout: None,
-        identity_store: EncryptedIdentityFile,
-    };
-
-    // -- Exec
-    app.lock()?;
-    let locked_state = (app.is_locked, app.identity.is_none());
-    app.unlock(&passphrase)?;
-
-    // -- Check
-    assert_eq!(locked_state, (true, true));
-    assert!(!app.is_locked);
-    assert!(app.identity.is_some());
-    Ok(())
-}
-
 // ── pending boot ────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn pending_boots_locked_and_stages_nothing_until_unlock() -> Result<()> {
-    // -- Setup & Fixtures: an encrypted identity on disk, an empty keychain
+async fn pending_boots_locked_and_holds_nothing() -> Result<()> {
+    // -- Setup & Fixtures: an encrypted identity on disk
     let dir = TempDir::new()?;
     let identity = AgeIdentity::generate();
     let passphrase = SecretString::from("test passphrase");
@@ -242,7 +192,6 @@ async fn pending_boots_locked_and_stages_nothing_until_unlock() -> Result<()> {
         },
         config_path: dir.path().join("config.toml"),
         identity_path,
-        session: Session::new(MockKeychain::new()),
         registry: VaultRegistry::new(storage),
         lock_timeout: None,
         pending_identity: None,
@@ -250,26 +199,11 @@ async fn pending_boots_locked_and_stages_nothing_until_unlock() -> Result<()> {
     };
 
     // -- Exec
-    let mut app: TestApp = App::pending(parts);
+    let app: TestApp = App::pending(parts);
 
-    // -- Check: locked, no identity, and the keychain stays empty
+    // -- Check: locked and holding nothing, even with an identity file on disk
     assert!(app.is_locked, "a pending boot is locked");
     assert!(app.identity.is_none(), "a pending boot holds no identity");
-    assert!(
-        app.session.get_identity()?.is_none(),
-        "a pending boot must not stage the identity in the keychain"
-    );
-
-    // -- Exec: the in-TUI unlock path
-    app.unlock(&passphrase)?;
-
-    // -- Check: staging happens at unlock, not before
-    assert!(!app.is_locked);
-    assert!(app.identity.is_some());
-    assert!(
-        app.session.get_identity()?.is_some(),
-        "unlock stages the identity for the agent"
-    );
     Ok(())
 }
 
@@ -317,7 +251,7 @@ async fn injected_factory_failure_surfaces_init_result_failed() -> Result<()> {
     redirect_xdg(&dir);
 
     // -- Exec
-    let result = App::init_with(MockKeychain::new(), FailingFactory, EncryptedIdentityFile).await;
+    let result = App::init_with(FailingFactory, EncryptedIdentityFile).await;
 
     // -- Check
     match result {
@@ -332,7 +266,7 @@ async fn injected_factory_failure_surfaces_init_result_failed() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn injected_in_memory_factory_boots_ready_without_disk_storage() -> Result<()> {
+async fn injected_in_memory_factory_opens_storage_and_boots_locked() -> Result<()> {
     // -- Setup & Fixtures
     let dir = TempDir::new()?;
     redirect_xdg(&dir);
@@ -342,17 +276,10 @@ async fn injected_in_memory_factory_boots_ready_without_disk_storage() -> Result
     write_identity_encrypted(&identity, &passphrase, &identity_path)?;
     AppConfig::default().save(&AppConfig::default_path())?;
 
-    let kc = MockKeychain::new();
-    {
-        use crate::ports::KeychainStore;
-        use secrecy::ExposeSecret;
-        kc.store_identity(identity.to_secret_string().expose_secret())?;
-    }
-
     // -- Exec
     let factory = InMemoryFactory::default();
     let opened = factory.opened.clone();
-    let result = App::init_with(kc, factory, EncryptedIdentityFile).await;
+    let result = App::init_with(factory, EncryptedIdentityFile).await;
 
     // -- Check
     assert!(
@@ -360,8 +287,11 @@ async fn injected_in_memory_factory_boots_ready_without_disk_storage() -> Result
         "init must open storage through the injected factory"
     );
     match result {
-        InitResult::Ready(app) => assert!(app.identity.is_some()),
-        _ => panic!("expected Ready with the injected in-memory factory"),
+        InitResult::Locked(parts) => assert!(
+            parts.pending_identity.is_none(),
+            "an existing vault boots locked, holding nothing"
+        ),
+        _ => panic!("expected Locked with the injected in-memory factory"),
     }
     Ok(())
 }

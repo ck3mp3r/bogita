@@ -38,9 +38,7 @@ signature = "2"
 ssh-agent-lib = "0.6"
 libc = "0.2"
 data-encoding = "2"
-keyring = { version = "4.2", features = ["v1", "apple-native-keyring-store", "windows-native-keyring-store", "linux-keyutils-keyring-store"] }
 
 [dev-dependencies]
 tempfile = "3"
 serial_test = "4"
-keyring-core = "1"

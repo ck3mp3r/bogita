@@ -439,6 +439,30 @@ fn test_agent_keyring_rebuild_is_refused_until_allowed() -> Result<()> {
 }
 
 #[test]
+fn test_agent_keyring_rebuild_consumes_the_permit() -> Result<()> {
+    // -- Setup & Fixtures
+    let material = SshKeyMaterial::keygen_ed25519("permit@example.com")?;
+    let entry = ssh_entry("github", &material, true);
+    let mut ring = KeyRing::new();
+
+    // -- Exec
+    ring.allow_rebuild();
+    let built = ring.rebuild(vec![entry.clone()]);
+    let armed_after_build = ring.rebuild_allowed();
+    let again = ring.rebuild(vec![entry]);
+
+    // -- Check: the permit lives only across the in-flight build
+    assert!(built);
+    assert!(
+        !armed_after_build,
+        "a completed build leaves the ring forbidden"
+    );
+    assert!(!again, "only allow_rebuild permits another build");
+    assert_eq!(ring.len(), 1, "the refused build kept the loaded cache");
+    Ok(())
+}
+
+#[test]
 fn test_agent_keyring_forbid_rebuild_blocks_the_next_rebuild() -> Result<()> {
     // -- Setup & Fixtures
     let material = SshKeyMaterial::keygen_ed25519("evicted@example.com")?;

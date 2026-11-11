@@ -8,7 +8,7 @@ use super::modals::{
     render_form_vault_picker, render_lock_screen,
 };
 use super::tui::{ActiveView, MessageKind, Tui};
-use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
+use bogita_core::agent::VaultService;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -18,7 +18,7 @@ use ratatui::widgets::{
 use ratatui::Frame;
 use std::time::Duration;
 
-impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
+impl<V: VaultService> Tui<V> {
     /// Render the current frame.
     pub(super) fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();

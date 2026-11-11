@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod entry;
+pub mod ssh_relay;
 pub mod ssh_sign;
 pub mod vault;
 

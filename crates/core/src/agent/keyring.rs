@@ -5,7 +5,8 @@
 //! Decrypting and parsing per request was rejected: it adds a database decrypt
 //! and an OpenSSH parse to every signature. Holding keys in RAM while unlocked
 //! is the normal exposure window of an SSH agent (1Password and Proton Pass do
-//! the same); eviction on lock belongs to the lock watcher (S4).
+//! the same); the cache is evicted by the vault service's own `lock`, which is
+//! also what `IdleWatch` applies when the idle cap elapses.
 //!
 //! Nothing here logs key material: a key that fails to parse is reported by
 //! entry name only.
@@ -91,11 +92,11 @@ impl std::fmt::Debug for KeyRingEntry {
 ///
 /// - `last_served_request` is the activity clock of the inactivity cap. Only a
 ///   successful request stamps it; refusals do not, so a client that keeps asking
-///   against a locked ring cannot keep the ring alive.
-/// - `rebuild_allowed` is the second line of defence for the residency cap. It is
-///   cleared by lock and by inactivity eviction and set only when the lock watcher
-///   observes a fresh unlock, so a rebuild path that some later caller adds cannot
-///   revive an evicted ring on the strength of a request.
+///   against a locked ring cannot keep the ring alive. `IdleWatch::step` is the
+///   comparator.
+/// - `rebuild_allowed` is the second line of defence for the residency cap. Lock
+///   clears it and only `VaultLock::unlock` sets it, so a rebuild path that some
+///   later caller adds cannot revive an evicted ring on the strength of a request.
 #[derive(Default)]
 pub struct KeyRing {
     entries: Option<Vec<KeyRingEntry>>,
@@ -138,7 +139,7 @@ impl KeyRing {
 
     /// Instant of the last request this ring served successfully.
     ///
-    /// The lock watcher compares it against the vault's `lock_timeout`; `None`
+    /// `IdleWatch::step` compares it against the vault's `lock_timeout`; `None`
     /// means the ring holds no cache, so there is nothing to evict.
     pub fn last_served_request(&self) -> Option<Instant> {
         self.last_served_request
@@ -154,12 +155,12 @@ impl KeyRing {
         self.rebuild_allowed
     }
 
-    /// Permit a rebuild: the lock watcher observed a fresh unlock.
+    /// Permit one rebuild: `VaultLock::unlock` started an unlock.
     pub fn allow_rebuild(&mut self) {
         self.rebuild_allowed = true;
     }
 
-    /// Refuse rebuilds until the lock watcher observes a fresh unlock.
+    /// Refuse rebuilds until `VaultLock::unlock` starts another unlock.
     pub fn forbid_rebuild(&mut self) {
         self.rebuild_allowed = false;
     }
@@ -168,11 +169,16 @@ impl KeyRing {
     ///
     /// Returns `false` when the rebuild was refused, which leaves the ring exactly
     /// as it was: locked and evicted.
+    ///
+    /// A permitted rebuild consumes the permit, so `rebuild_allowed` is false once
+    /// the cache is loaded: the permit exists only across an in-flight unlock, and a
+    /// refused or failed one leaves the ring forbidden.
     pub fn rebuild(&mut self, entries: impl IntoIterator<Item = Entry>) -> bool {
         if !self.rebuild_allowed {
             return false;
         }
         self.load_entries(entries);
+        self.rebuild_allowed = false;
         true
     }
 

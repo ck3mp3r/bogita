@@ -22,20 +22,15 @@
 //! the cap closes the connection without a reply, so an announced length can never park a
 //! session.
 
-use crate::agent::control::{
-    status_payload, Control, GRACEFUL_DRAIN, STATUS_EXTENSION, STOP_EXTENSION,
-};
+use crate::agent::control::{Control, GRACEFUL_DRAIN};
 use crate::agent::error::SshAgentError;
-use crate::agent::keyring::rsa_hash_alg;
+use crate::agent::unlock::{NoLock, VaultService};
 use crate::agent::{signals, socket};
 use ssh_agent_lib::agent::{listen, Agent, ListeningSocket, Session};
-use ssh_agent_lib::error::AgentError;
-use ssh_agent_lib::proto::{Extension, Identity, PublicCredential, SignRequest};
-use ssh_key::Signature;
 use std::io;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, MutexGuard};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -76,31 +71,48 @@ pub async fn serve(
     ring: SharedKeyRing,
     socket_path: impl AsRef<Path>,
 ) -> Result<(), SshAgentError> {
-    serve_with(ring, socket_path.as_ref(), Arc::new(Control::new())).await
+    serve_with(
+        ring,
+        socket_path.as_ref(),
+        Arc::new(Control::new()),
+        Arc::new(NoLock),
+    )
+    .await
+}
+
+/// Bind and serve with an explicit lock handler.
+pub async fn serve_with_lock<L: VaultService + 'static>(
+    ring: SharedKeyRing,
+    socket_path: impl AsRef<Path>,
+    lock: Arc<L>,
+) -> Result<(), SshAgentError> {
+    serve_with(ring, socket_path.as_ref(), Arc::new(Control::new()), lock).await
 }
 
 /// Serve until a stop arrives through the control extensions, SIGINT, or SIGHUP.
 ///
 /// The daemon child uses this entry point: closing the terminal that started it
 /// must reach the same drain-and-unlink path as an explicit stop.
-pub async fn serve_with_signals(
+pub async fn serve_with_signals<L: VaultService + 'static>(
     ring: SharedKeyRing,
     socket_path: impl AsRef<Path>,
+    lock: Arc<L>,
 ) -> Result<(), SshAgentError> {
     signals::install()?;
     let control = Arc::new(Control::new());
     let watcher = tokio::spawn(watch_termination(Arc::clone(&control)));
 
-    let served = serve_with(ring, socket_path.as_ref(), control).await;
+    let served = serve_with(ring, socket_path.as_ref(), control, lock).await;
 
     watcher.abort();
     served
 }
 
-async fn serve_with(
+async fn serve_with<L: VaultService + 'static>(
     ring: SharedKeyRing,
     socket_path: &Path,
     control: Arc<Control>,
+    lock: Arc<L>,
 ) -> Result<(), SshAgentError> {
     let private_umask = socket::PrivateUmask::set();
     socket::prepare(socket_path)?;
@@ -110,7 +122,7 @@ async fn serve_with(
     drop(private_umask);
     let guard = socket::SocketGuard::new(socket_path)?;
 
-    let agent = GatedAgent::new(ring, Arc::clone(&control));
+    let agent = GatedAgent::new(ring, Arc::clone(&control), lock);
     let served = tokio::select! {
         served = listen(CappedListener::new(listener), agent) => Some(served),
         () = control.stopped() => None,
@@ -293,18 +305,20 @@ impl AsyncWrite for CappedStream {
 // region:    --- Agent
 
 /// Session factory that applies the peer-uid gate to every connection.
-pub struct GatedAgent {
+pub struct GatedAgent<L: VaultService = NoLock> {
     ring: SharedKeyRing,
     own_uid: u32,
     control: Arc<Control>,
+    lock: Arc<L>,
 }
 
-impl GatedAgent {
-    fn new(ring: SharedKeyRing, control: Arc<Control>) -> Self {
+impl<L: VaultService> GatedAgent<L> {
+    fn new(ring: SharedKeyRing, control: Arc<Control>, lock: Arc<L>) -> Self {
         Self {
             ring,
             own_uid: socket::current_uid(),
             control,
+            lock,
         }
     }
 
@@ -320,12 +334,13 @@ impl GatedAgent {
     }
 }
 
-impl Agent<CappedListener> for GatedAgent {
+impl<L: VaultService + 'static> Agent<CappedListener> for GatedAgent<L> {
     fn new_session(&mut self, stream: &CappedStream) -> impl Session {
         BogitaSession::tracked(
             self.ring.clone(),
             self.admits(stream.inner()),
             Arc::clone(&self.control),
+            Arc::clone(&self.lock),
         )
     }
 }
@@ -334,113 +349,13 @@ impl Agent<CappedListener> for GatedAgent {
 
 // region:    --- Session
 
-/// One agent connection: the shared ring, the peer-gate verdict, and the
-/// in-flight ticket the drain counts.
-///
-/// A session that does not pass the peer gate answers FAILURE to every request
-/// and never touches the ring.
-pub struct BogitaSession {
-    ring: SharedKeyRing,
-    permits: bool,
-    active: SessionTicket,
-}
+mod session;
 
-impl BogitaSession {
-    /// A session that is not attached to a serve loop.
-    ///
-    /// It answers the two control extensions, but a stop request signals only
-    /// its own control handle, so no daemon shuts down.
-    pub fn new(ring: SharedKeyRing, permits: bool) -> Self {
-        Self::tracked(ring, permits, Arc::new(Control::new()))
-    }
-
-    fn tracked(ring: SharedKeyRing, permits: bool, control: Arc<Control>) -> Self {
-        Self {
-            ring,
-            permits,
-            active: SessionTicket::new(control),
-        }
-    }
-
-    fn ring(&self) -> MutexGuard<'_, crate::agent::keyring::KeyRing> {
-        self.ring.lock().expect("key ring mutex poisoned")
-    }
-}
-
-#[ssh_agent_lib::async_trait]
-impl Session for BogitaSession {
-    async fn request_identities(&mut self) -> Result<Vec<Identity>, AgentError> {
-        if !self.permits {
-            return Err(AgentError::Failure);
-        }
-
-        let mut ring = self.ring();
-        if ring.is_locked() {
-            return Err(failure(SshAgentError::Locked));
-        }
-
-        let identities: Vec<Identity> = ring
-            .entries()
-            .iter()
-            .map(|entry| Identity {
-                credential: PublicCredential::Key(entry.public_key().clone()),
-                comment: entry.comment().to_string(),
-            })
-            .collect();
-
-        // A served request counts against the inactivity cap; a refusal does not.
-        ring.note_request();
-        Ok(identities)
-    }
-
-    async fn sign(&mut self, request: SignRequest) -> Result<Signature, AgentError> {
-        if !self.permits {
-            return Err(AgentError::Failure);
-        }
-
-        let mut ring = self.ring();
-        let signature = ring
-            .sign(
-                request.credential.key_data(),
-                &request.data,
-                rsa_hash_alg(request.flags),
-            )
-            .map_err(failure)?;
-        ring.note_request();
-        Ok(signature)
-    }
-
-    async fn extension(&mut self, extension: Extension) -> Result<Option<Extension>, AgentError> {
-        if !self.permits {
-            return Err(AgentError::ExtensionFailure);
-        }
-
-        match extension.name.as_str() {
-            STOP_EXTENSION => {
-                self.active.0.request_stop();
-                Ok(None)
-            }
-            STATUS_EXTENSION => {
-                let ring = self.ring();
-                let payload = status_payload(ring.len(), ring.is_locked());
-                Ok(Some(Extension {
-                    name: extension.name,
-                    details: payload.into_bytes().into(),
-                }))
-            }
-            _ => Err(AgentError::ExtensionFailure),
-        }
-    }
-}
+pub use session::BogitaSession;
 
 // endregion: --- Session
 
 // region:    --- Support
-
-/// Map a daemon error onto the generic agent failure (FAILURE(5) on the wire).
-fn failure(error: SshAgentError) -> AgentError {
-    AgentError::other(error)
-}
 
 /// Counts a session as in flight and drops the count when the session ends.
 struct SessionTicket(Arc<Control>);
@@ -462,10 +377,6 @@ impl Drop for SessionTicket {
 
 // region:    --- Tests
 #[cfg(test)]
-#[path = "../../test/agent/session.rs"]
-mod session_test;
-
-#[cfg(test)]
 #[path = "../../test/agent/server_frame.rs"]
 mod server_frame_test;
 
@@ -478,16 +389,24 @@ mod server_test;
 mod server_control_test;
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../test/agent/server_lock.rs"]
-mod server_lock_test;
-
-#[cfg(all(test, feature = "integration"))]
 #[path = "../../test/agent/conformance.rs"]
 mod conformance_test;
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../test/agent/security.rs"]
-mod security_test;
+#[path = "../../test/agent/security/support.rs"]
+mod security_support;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/agent/security/socket_gate.rs"]
+mod security_socket_gate_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/agent/security/logs.rs"]
+mod security_logs_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/agent/security/passphrase.rs"]
+mod security_passphrase_test;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/agent/real_client.rs"]

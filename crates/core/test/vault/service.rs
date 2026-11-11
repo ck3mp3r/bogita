@@ -1,4 +1,4 @@
-//! Tests for VaultService
+//! Tests for VaultEntryService
 //!
 //! TDD: RED → GREEN → REFACTOR
 //! Uses real SqliteStorage (:memory:) and real AgeCrypto — no mocks.
@@ -9,7 +9,7 @@ use crate::crypto::age::AgeCrypto;
 use crate::domain::{AgeIdentity, Entry, EntryType, Field, FieldType, FieldValue};
 use crate::storage::sqlite::SqliteStorage;
 use crate::test_support::{test_entry, test_field};
-use crate::vault::service::VaultService;
+use crate::vault::service::VaultEntryService;
 use uuid::Uuid;
 
 fn now() -> i64 {
@@ -22,12 +22,15 @@ fn create_test_keys() -> (Vec<crate::domain::AgeRecipient>, AgeIdentity) {
     (vec![recipient], identity)
 }
 
-async fn create_service() -> Result<(VaultService<SqliteStorage<AgeCrypto>>, Uuid)> {
+async fn create_service() -> Result<(VaultEntryService<SqliteStorage<AgeCrypto>>, Uuid)> {
     let storage = SqliteStorage::new(":memory:", AgeCrypto).await?;
     let vault_id = Uuid::new_v4();
     crate::test_support::seed_vault(&storage, vault_id).await?;
     let (recipients, identity) = create_test_keys();
-    Ok((VaultService::new(storage, recipients, identity), vault_id))
+    Ok((
+        VaultEntryService::new(storage, recipients, identity),
+        vault_id,
+    ))
 }
 
 fn make_entry(vault_id: Uuid, name: &str) -> Entry {

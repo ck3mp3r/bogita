@@ -7,12 +7,12 @@ use crate::views::inserts_text;
 use crate::views::main_view::MainViewAction;
 use crate::views::password_gen_view::{PasswordGenAction, PasswordGenView};
 use crate::views::vault_form::{VaultForm, VaultFormAction};
-use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
+use bogita_core::agent::VaultService;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::widgets::ListState;
 use std::time::Instant;
 
-impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
+impl<V: VaultService> Tui<V> {
     /// Dismiss the error overlay on Esc/Enter. Returns `true` when an overlay is
     /// showing, in which case the key is consumed either way.
     fn dismiss_error_overlay(&mut self, key: KeyCode) -> bool {
@@ -43,7 +43,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
 
         // Ctrl-L: lock the vault (only from Main view, not locked)
         if key == KeyCode::Char('l') && modifiers == KeyModifiers::CONTROL {
-            if !self.app.is_locked {
+            if !self.service.is_locked() {
                 self.lock();
             }
             return;
@@ -296,7 +296,6 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         if let Some(e) = entry {
                             self.active = ActiveView::ConfirmDelete {
                                 entry_id: e.id,
-                                vault_id: e.vault_id,
                                 name: e.name.clone(),
                             };
                         }
@@ -327,9 +326,9 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                             });
                         }
                     }
-                    MainViewAction::SelectEntry { entry_id, vault_id } => {
+                    MainViewAction::SelectEntry { entry_id, .. } => {
                         self.detail_entry = None;
-                        self.pending = Some(AppAction::LoadDetail { entry_id, vault_id });
+                        self.pending = Some(AppAction::LoadDetail { entry_id });
                     }
                 },
             },
@@ -390,13 +389,10 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     }
                 }
             }
-            ActiveView::ConfirmDelete {
-                entry_id, vault_id, ..
-            } => match key {
+            ActiveView::ConfirmDelete { entry_id, .. } => match key {
                 KeyCode::Char('d') | KeyCode::Char('D') => {
                     self.pending = Some(AppAction::DeleteEntry {
                         entry_id: *entry_id,
-                        vault_id: *vault_id,
                     });
                     self.active = ActiveView::Main;
                 }
@@ -419,9 +415,9 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             },
             ActiveView::VaultForm(form) => match form.handle_key_with_modifiers(key, modifiers) {
                 VaultFormAction::Confirm(mut vault) => {
-                    match &self.app.identity {
-                        Some(identity) => {
-                            vault.recipients = vec![identity.to_recipient()];
+                    match self.service.recipient() {
+                        Some(recipient) => {
+                            vault.recipients = vec![recipient];
                         }
                         None => {
                             self.error_message =
@@ -440,7 +436,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             },
             ActiveView::Locked {
                 passphrase_input,
-                error,
+                error: _,
             } => {
                 match key {
                     KeyCode::Esc => {
@@ -449,17 +445,10 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     KeyCode::Enter => {
                         let passphrase =
                             secrecy::SecretString::from(passphrase_input.text().to_string());
-                        match self.app.unlock(&passphrase) {
-                            Ok(()) => {
-                                // Switch to Main and queue entry reload
-                                self.active = ActiveView::Main;
-                                self.pending = Some(AppAction::ReloadEntries);
-                            }
-                            Err(e) => {
-                                *error = Some(e.to_string());
-                                passphrase_input.set_text("");
-                            }
-                        }
+                        // The unlock reads the identity file and the vault, so it is
+                        // deferred to the flush after this keypress; a refusal keeps
+                        // the lock screen, shows the error, and clears the input.
+                        self.pending = Some(AppAction::Unlock { passphrase });
                     }
                     KeyCode::Char(c) if inserts_text(modifiers) => {
                         passphrase_input.set_text(format!("{}{}", passphrase_input.text(), c));

@@ -81,7 +81,7 @@ impl<T: VaultStore + EntryStore> Storage for T {}
 
 /// Forward all VaultStore calls through a shared reference.
 ///
-/// Borrowing adapter for `VaultService` (used by vault/registry.rs): these
+/// Borrowing adapter for `VaultEntryService` (used by vault/registry.rs): these
 /// forwarding impls let a shared registry hand out scoped services without
 /// cloning the storage. This is the only sanctioned wrapper-forwarding site.
 #[async_trait]

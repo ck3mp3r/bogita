@@ -32,6 +32,10 @@ pub enum SshAgentError {
     #[error("no agent is running on {0}")]
     NotRunning(String),
 
+    /// The daemon refused the unlock: wrong passphrase, or no identity source.
+    #[error("the daemon refused the unlock: wrong passphrase")]
+    UnlockRefused,
+
     /// The control extension failed or answered an unexpected message.
     #[error("agent control channel failed: {0}")]
     Control(String),

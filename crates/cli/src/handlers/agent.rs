@@ -22,8 +22,8 @@ const STARTUP_INTERVAL: Duration = Duration::from_millis(10);
 /// `bogita agent start [--socket <path>]`
 ///
 /// Spawns the detached daemon and returns the socket path the caller must print
-/// as `SSH_AUTH_SOCK`. The caller has already established that the vault is
-/// unlocked: the daemon reads the identity from the keychain.
+/// as `SSH_AUTH_SOCK`. The daemon boots locked and gets its identity from the
+/// unlock request, so the start itself needs no credential.
 ///
 /// The directory the daemon binds in is prepared here, before the spawn: a
 /// pre-existing mode another user can reach is narrowed to 0700 and verified, so the

@@ -1,59 +1,18 @@
 //! Shared test helpers for bogita-core.
 //!
-//! Provides [`MockKeychain`], an in-memory implementation of [`KeychainStore`]
-//! that avoids touching the OS keychain. All test code should use this instead
-//! of the `keyring-core` mock store.
-//!
-//! Also provides fixture builders for domain values and [`seed_vault`], a
-//! vault-row insert so tests can satisfy foreign-key constraints without
-//! building a full `Vault` with recipients.
+//! Provides fixture builders for domain values and [`seed_vault`], a vault-row
+//! insert so tests can satisfy foreign-key constraints without building a full
+//! `Vault` with recipients.
 
 use crate::domain::{
     AgeIdentity, AgeRecipient, Entry, EntryType, Field, FieldType, FieldValue, Vault,
 };
-use crate::ports::KeychainStore;
-use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[cfg(feature = "integration")]
 use crate::error::Result;
 #[cfg(feature = "integration")]
 use crate::ports::VaultStore;
-
-/// In-memory keychain for testing. Never touches the OS keychain.
-///
-/// The handle is shared, so a test can keep one clone to flip the item and hand
-/// another to the code under test.
-#[derive(Clone, Default)]
-pub struct MockKeychain {
-    inner: Arc<Mutex<Option<String>>>,
-}
-
-impl MockKeychain {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl KeychainStore for MockKeychain {
-    fn store_identity(&self, secret_key: &str) -> crate::error::Result<()> {
-        *self.inner.lock().expect("mock keychain mutex poisoned") = Some(secret_key.to_string());
-        Ok(())
-    }
-
-    fn get_identity(&self) -> crate::error::Result<Option<String>> {
-        Ok(self
-            .inner
-            .lock()
-            .expect("mock keychain mutex poisoned")
-            .clone())
-    }
-
-    fn delete_identity(&self) -> crate::error::Result<()> {
-        *self.inner.lock().expect("mock keychain mutex poisoned") = None;
-        Ok(())
-    }
-}
 
 /// Build a non-default vault with no recipients used by fixtures.
 pub fn test_vault(name: &str) -> Vault {

@@ -157,7 +157,7 @@ pub enum EntryCommands {
 pub enum VaultCommands {
     /// List all vaults
     List,
-    /// Lock the vault (remove identity from keychain)
+    /// Lock the vault (ask the agent to drop its identity and key ring)
     Lock,
     /// Unlock the vault (prompt for passphrase)
     ///
@@ -210,10 +210,11 @@ pub enum VaultCommands {
 pub enum AgentCommands {
     /// Start the agent daemon and print its socket as SSH_AUTH_SOCK
     ///
-    /// The vault must be unlocked: the daemon reads the staged identity from the
-    /// keychain and never prompts. It refuses with "vault is locked; run bogita
-    /// unlock" while the vault is locked, and with a message naming the socket
-    /// while another daemon already answers on it.
+    /// The vault must be initialized: the daemon boots locked, holds no identity,
+    /// and never prompts. `bogita unlock` gives it the identity over the socket. It
+    /// refuses with "vault is not initialized; run bogita unlock to set up" before
+    /// that, and with a message naming the socket while another daemon already
+    /// answers on it.
     Start {
         /// Serve on this path instead of the default socket
         #[arg(long)]

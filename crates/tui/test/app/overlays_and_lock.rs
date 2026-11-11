@@ -2,6 +2,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 use crate::app::{RunState, Tui};
 use crate::context::TuiContext;
+use bogita_core::agent::VaultService;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::support::*;
@@ -315,11 +316,11 @@ async fn esc_in_discard_modal_returns_to_form() -> Result<()> {
 async fn ctrl_l_locks_the_tui() -> Result<()> {
     let app = make_app().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
-    assert!(!tui.app.is_locked);
+    assert!(!tui.service.is_locked());
 
     tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
 
-    assert!(tui.app.is_locked, "Ctrl-L should lock the app");
+    assert!(tui.service.is_locked(), "Ctrl-L should lock the app");
     assert_eq!(
         tui.main_view.visible_entries().len(),
         0,
@@ -339,11 +340,11 @@ async fn ctrl_l_when_locked_is_noop() -> Result<()> {
 
     // Lock once
     tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
-    assert!(tui.app.is_locked);
+    assert!(tui.service.is_locked());
 
     // Try locking again — should be a no-op
     tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
-    assert!(tui.app.is_locked, "should still be locked");
+    assert!(tui.service.is_locked(), "should still be locked");
     Ok(())
 }
 
@@ -371,10 +372,12 @@ async fn enter_on_lock_screen_with_wrong_passphrase_shows_error() -> Result<()> 
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
+    // The unlock is deferred to the flush, the way the event loop drains it.
+    tui.flush_pending().await?;
 
     // Should still be locked (no identity file on disk, so unlock will fail)
     assert!(
-        tui.app.is_locked,
+        tui.service.is_locked(),
         "should remain locked after wrong passphrase"
     );
     Ok(())
@@ -451,8 +454,9 @@ async fn lock_screen_backspace_removes_chars() -> Result<()> {
 
     // Enter with remaining char should still fail (no identity file)
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
+    tui.flush_pending().await?;
 
-    assert!(tui.app.is_locked, "should remain locked");
+    assert!(tui.service.is_locked(), "should remain locked");
     Ok(())
 }
 
@@ -465,9 +469,10 @@ async fn lock_screen_enter_with_empty_input_shows_error() -> Result<()> {
 
     // Enter with empty input
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
+    tui.flush_pending().await?;
 
     assert!(
-        tui.app.is_locked,
+        tui.service.is_locked(),
         "should remain locked with empty passphrase"
     );
     Ok(())

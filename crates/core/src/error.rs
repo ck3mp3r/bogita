@@ -71,9 +71,6 @@ pub enum CryptoError {
 
     #[error("invalid identity: {0}")]
     InvalidIdentity(String),
-
-    #[error("keychain error: {0}")]
-    KeychainError(String),
 }
 
 #[derive(Debug, Error)]

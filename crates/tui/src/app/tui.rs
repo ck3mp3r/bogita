@@ -7,14 +7,15 @@ use crate::views::entry_form::EntryForm;
 use crate::views::main_view::MainView;
 use crate::views::password_gen_view::PasswordGenView;
 use crate::views::vault_form::VaultForm;
-use bogita_core::app::App;
+use bogita_core::agent::socket::default_socket_path;
+use bogita_core::agent::{client, VaultService};
 use bogita_core::domain::{Entry, Vault};
 use bogita_core::error::Result;
-use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
 use rat_widget::text_input::TextInputState;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::widgets::ListState;
 use ratatui::DefaultTerminal;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -43,7 +44,6 @@ pub(super) enum ActiveView {
     /// Delete confirmation modal overlay.
     ConfirmDelete {
         entry_id: Uuid,
-        vault_id: Uuid,
         /// Entry name shown in the prompt.
         name: String,
     },
@@ -83,10 +83,16 @@ pub enum MessageKind {
 }
 
 /// Top-level TUI application.
-pub struct Tui<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> {
+pub struct Tui<V: VaultService> {
     pub context: TuiContext,
     pub state: RunState,
-    pub app: App<K, F, I>,
+    /// The composed vault service: the TUI's only owner of the registry and the lock.
+    pub service: V,
+    /// Idle auto-lock timeout in seconds, from the vault configuration.
+    pub lock_timeout: Option<u64>,
+    /// Socket of the agent daemon the exit lock asks to lock. The derived default in
+    /// production; an explicit path when a caller serves elsewhere.
+    daemon_socket: PathBuf,
     pub main_view: MainView,
     pub(super) active: ActiveView,
     pub(super) pending: Option<AppAction>,
@@ -111,24 +117,24 @@ pub struct Tui<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> {
     pub(super) help_pending_g: bool,
 }
 
-impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
-    /// Create a new `Tui` with the given startup context.
+impl<V: VaultService> Tui<V> {
+    /// Create a new `Tui` over the composed vault service.
     ///
-    /// Loads all vaults and their entries from the registry so `MainView`
+    /// Loads all vaults and their entries through the service so `MainView`
     /// starts with real data rather than empty lists.
-    pub async fn new(app: App<K, F, I>, context: TuiContext) -> bogita_core::error::Result<Self> {
+    pub async fn new(service: V, context: TuiContext) -> Result<Self> {
         // Load vaults
-        let vaults = app.registry.list_vaults().await?;
+        let vaults = service.list_vaults().await?;
 
         // Load entries from every vault (empty while locked)
-        let all_entries = app.all_entries().await?;
+        let all_entries = service.all_entries().await?;
 
         let main_view = MainView::new(vaults.clone(), all_entries.clone());
         let detail_entry = all_entries.into_iter().next();
-        // A locked app boots on its own lock screen: the passphrase is asked in
+        // A locked service boots on its own lock screen: the passphrase is asked in
         // here, never on a terminal prompt. The startup context is dropped in
         // that case — its intent is re-dispatched after unlock (deferred).
-        let (active, error_message) = if app.is_locked {
+        let (active, error_message) = if service.is_locked() {
             (
                 ActiveView::Locked {
                     passphrase_input: TextInputState::named("passphrase"),
@@ -151,7 +157,7 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     (ActiveView::VaultForm(VaultForm::new(name.clone())), None)
                 }
                 TuiContext::EditEntry { name, vault } => {
-                    match find_named_entry(&app, &vaults, vault.as_deref(), name).await? {
+                    match find_named_entry(&service, &vaults, vault.as_deref(), name).await? {
                         Some((entry, vault)) => {
                             let mut form = EntryForm::new_edit(&entry);
                             form.set_vault(vault.id, vault.name.clone());
@@ -161,11 +167,10 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     }
                 }
                 TuiContext::DeleteEntry { name, vault } => {
-                    match find_named_entry(&app, &vaults, vault.as_deref(), name).await? {
-                        Some((entry, vault)) => (
+                    match find_named_entry(&service, &vaults, vault.as_deref(), name).await? {
+                        Some((entry, _)) => (
                             ActiveView::ConfirmDelete {
                                 entry_id: entry.id,
-                                vault_id: vault.id,
                                 name: entry.name.clone(),
                             },
                             None,
@@ -179,7 +184,9 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         Ok(Self {
             context,
             state: RunState::Running,
-            app,
+            service,
+            lock_timeout: None,
+            daemon_socket: default_socket_path(),
             main_view,
             active,
             pending: None,
@@ -196,12 +203,52 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         })
     }
 
+    /// Set the idle auto-lock timeout (seconds) the event loop enforces.
+    pub fn with_lock_timeout(mut self, lock_timeout: Option<u64>) -> Self {
+        self.lock_timeout = lock_timeout;
+        self
+    }
+
+    /// Point the exit lock at the daemon socket `socket`.
+    ///
+    /// The derived default is the production socket; this override exists for a
+    /// daemon serving elsewhere and for tests that must not reach a live daemon.
+    pub fn with_daemon_socket(mut self, socket: impl Into<PathBuf>) -> Self {
+        self.daemon_socket = socket.into();
+        self
+    }
+
+    /// Lock when the idle cap elapsed. Returns true when this call locked.
+    ///
+    /// A service that is already locked is left alone: the view sync puts the lock
+    /// screen up for it.
+    pub(super) fn poll_idle_lock(&mut self) -> bool {
+        let Some(timeout) = self.lock_timeout else {
+            return false;
+        };
+        if self.service.is_locked() || self.last_keypress.elapsed() < Duration::from_secs(timeout) {
+            return false;
+        }
+        self.lock();
+        true
+    }
+
+    /// Show the lock screen whenever the service reports itself locked.
+    ///
+    /// The service owns the lock, so a lock taken through it is the only signal the
+    /// view needs: the idle cap, an explicit request, or a failed unlock all leave
+    /// the same is_locked answer.
+    pub(super) fn sync_lock_view(&mut self) {
+        if self.service.is_locked() && !matches!(self.active, ActiveView::Locked { .. }) {
+            self.clear_locked_view();
+        }
+    }
+
     /// Run the TUI event loop.
     ///
     /// Every exit path ends here: quit keys, Ctrl-C and the termination signals
-    /// all stop the loop, then the terminal is restored and the staged identity
-    /// is deleted. Restore comes first so a lock failure still leaves a usable
-    /// terminal.
+    /// all stop the loop, then the terminal is restored and the service locked.
+    /// Restore comes first so a lock still leaves a usable terminal.
     pub async fn run(mut self) -> Result<()> {
         if let Err(e) = signals::install() {
             eprintln!("warning: cannot install the exit signal handlers: {e}");
@@ -247,14 +294,10 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     _ => {}
                 }
             }
-            // Auto-lock check: lock after lock_timeout seconds of inactivity
-            if let Some(timeout) = self.app.lock_timeout {
-                if !self.app.is_locked
-                    && self.last_keypress.elapsed() >= Duration::from_secs(timeout)
-                {
-                    self.lock();
-                }
-            }
+            // Auto-lock on the vault's idle cap, then mirror the service's lock
+            // state in the view: the service owns the lock, so the view follows it.
+            self.poll_idle_lock();
+            self.sync_lock_view();
             // Auto-dismiss expired status messages
             if let Some((_, created_at)) = &self.status_message {
                 if created_at.elapsed() >= Duration::from_secs(3) {
@@ -265,32 +308,27 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         Ok(())
     }
 
-    /// Lock the vault: clear identity, clear entries, show lock screen.
+    /// Lock the vault: drop the identity, clear entries, show lock screen.
     pub(super) fn lock(&mut self) {
-        if let Err(e) = self.app.lock() {
-            self.error_message = Some(e.to_string());
-            return;
-        }
-        self.main_view.reload_entries(Vec::new());
-        self.detail_entry = None;
-        self.active = ActiveView::Locked {
-            passphrase_input: TextInputState::named("passphrase"),
-            error: None,
-        };
+        self.service.lock();
+        self.clear_locked_view();
     }
 
     /// Lock on the way out, after `ratatui::restore()`.
     ///
-    /// The lock is not optional: leaving the identity staged keeps the agent
-    /// daemon serving keys with no owner. One retry, then a loud failure and
-    /// exit code 3, so a script sees that the vault is still open.
+    /// The lock is not optional: leaving the identity held keeps the agent
+    /// daemon serving keys with no owner. Two locks run here. The local
+    /// `VaultService::lock` drops the held identity and evicts this process's
+    /// ring and cannot fail. The daemon owns its own lock, so the same request
+    /// goes over the socket as well; a daemon that is missing or dead is
+    /// already locked and answers nothing, so its error is ignored.
     pub(super) fn lock_at_exit(&mut self) {
-        if let Err(e) = lock_with_retry(&mut self.app) {
-            eprintln!(
-                "error: failed to lock the vault at exit ({e}); the staged identity stays in the keychain — run bogita lock"
-            );
-            std::process::exit(3);
-        }
+        self.lock();
+        let _ = client::lock(&self.daemon_socket);
+    }
+
+    /// Clear every decrypted entry and show the lock screen.
+    fn clear_locked_view(&mut self) {
         self.main_view.reload_entries(Vec::new());
         self.detail_entry = None;
         self.active = ActiveView::Locked {
@@ -298,14 +336,6 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             error: None,
         };
     }
-}
-
-/// Lock the app, retrying once: a transient keychain error must not leave the
-/// identity staged.
-fn lock_with_retry<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore>(
-    app: &mut App<K, F, I>,
-) -> Result<()> {
-    app.lock().or_else(|_| app.lock())
 }
 
 /// Resolve the vault to use: the named vault when it exists, else the default
@@ -318,16 +348,13 @@ fn resolve_vault<'a>(vaults: &'a [Vault], name: Option<&str>) -> Option<&'a Vaul
 
 /// Find an entry by name in the requested vault, or in the default vault when
 /// no vault name is given.
-async fn find_named_entry<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore>(
-    app: &App<K, F, I>,
+async fn find_named_entry<V: VaultService>(
+    service: &V,
     vaults: &[Vault],
     vault_name: Option<&str>,
     entry_name: &str,
 ) -> Result<Option<(Entry, Vault)>> {
     let Some(vault) = resolve_vault(vaults, vault_name) else {
-        return Ok(None);
-    };
-    let Some(service) = app.service_for(vault) else {
         return Ok(None);
     };
     let entries = service.list_entries(vault.id, None).await?;

@@ -10,16 +10,14 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 use crate::app::Tui;
 use crate::context::TuiContext;
-use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
-use bogita_core::test_support::MockKeychain;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use super::support::make_app;
+use super::support::{make_app, TestService};
 
-type TestTui = Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>;
+type TestTui = Tui<TestService>;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
@@ -38,7 +36,7 @@ async fn locked_tui() -> Result<(TestTui, Terminal<TestBackend>)> {
     Ok((tui, terminal))
 }
 
-/// Deliver one key the way the loop does: draw, handle, draw again.
+/// Deliver one key the way the loop does: draw, handle, drain, draw again.
 async fn live_key(
     tui: &mut TestTui,
     terminal: &mut Terminal<TestBackend>,
@@ -47,6 +45,7 @@ async fn live_key(
 ) -> Result<()> {
     terminal.draw(|frame| tui.render(frame))?;
     tui.handle_key_with_modifiers(key, modifiers);
+    tui.flush_pending().await?;
     terminal.draw(|frame| tui.render(frame))?;
     Ok(())
 }

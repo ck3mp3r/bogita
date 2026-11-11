@@ -5,7 +5,6 @@ pub mod domain;
 pub mod error;
 pub mod ports;
 pub mod service;
-pub mod session;
 pub mod storage;
 pub mod vault;
 

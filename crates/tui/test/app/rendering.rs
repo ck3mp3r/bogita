@@ -1,5 +1,6 @@
 use crate::app::{wrap_text, Tui};
 use crate::context::TuiContext;
+use bogita_core::agent::VaultService;
 use bogita_core::test_support::test_vault;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
@@ -51,7 +52,7 @@ async fn add_entry_context_renders_named_vault() -> Result<()> {
     // -- Setup & Fixtures
     let app = make_app().await?;
     let vault = test_vault("testvault");
-    app.registry.add_vault(&vault).await?;
+    app.add_vault(&vault).await?;
     let mut tui = Tui::new(
         app,
         TuiContext::AddEntry {

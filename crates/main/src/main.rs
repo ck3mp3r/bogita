@@ -1,11 +1,18 @@
 use bogita_cli::args::{AgentCommands, Cli, CliCommand, Commands, EntryCommands, VaultCommands};
+use bogita_cli::handlers::agent::handle_start;
+use bogita_core::agent::client;
+use bogita_core::agent::control;
+use bogita_core::agent::error::SshAgentError;
+use bogita_core::agent::socket::default_socket_path;
+use bogita_core::agent::{KeyRing, VaultLock};
 use bogita_core::app::{App, DefaultApp, InitParts, InitResult};
 use bogita_core::domain::SecretString;
-use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
+use bogita_core::ports::{IdentityStore, VaultStorageFactory};
 use bogita_tui::app::Tui;
 use bogita_tui::context::TuiContext;
 use clap::Parser;
 use std::ffi::OsString;
+use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
 // region:    --- Modules
@@ -45,7 +52,7 @@ async fn main() {
         None => launch_tui(TuiContext::Default).await,
         Some(cmd) => match dispatch(cmd) {
             Dispatch::Tui(ctx) => launch_tui(ctx).await,
-            Dispatch::Lock => lock_vault().await,
+            Dispatch::Lock => lock_vault(),
             Dispatch::Unlock(secret) => unlock_vault(secret).await,
             Dispatch::Cli(cli_cmd) => run_cli(cli_cmd, init_app().await).await,
             Dispatch::AgentStart { socket } => run_agent_start(socket).await,
@@ -82,7 +89,7 @@ fn git_helper_args() -> Option<Vec<String>> {
 enum Dispatch {
     /// Launch the TUI focused on the given view.
     Tui(TuiContext),
-    /// Lock the vault (remove the identity from the keychain).
+    /// Lock the vault (ask the daemon to evict its key ring).
     Lock,
     /// Unlock the vault with the resolved passphrase source.
     Unlock(UnlockSecret),
@@ -202,49 +209,58 @@ fn dispatch(cmd: Commands) -> Dispatch {
     }
 }
 
-/// Lock the vault (remove the identity from the keychain).
-async fn lock_vault() {
-    match DefaultApp::init().await {
-        InitResult::Ready(mut app) => {
-            app.lock().unwrap_or_else(|e| {
-                eprintln!("error: {e}");
-                std::process::exit(1);
-            });
-            println!("vault locked");
-        }
-        InitResult::Locked(_) => {
-            println!("vault is already locked");
-        }
-        InitResult::Failed { message } => {
-            eprintln!("error: {message}");
-            std::process::exit(1);
-        }
-        InitResult::NeedsPassphrase(_) => {
-            println!("vault is not initialized");
-        }
+/// Lock the vault: ask the daemon to evict its key ring.
+///
+/// The daemon owns the lock, so a lock is a control request. Nothing answering
+/// on the socket means nothing holds key material, which is already locked.
+fn lock_vault() {
+    let socket = default_socket_path();
+    if !client::responds(&socket) {
+        println!("vault is already locked");
+        return;
+    }
+    match client::lock(&socket) {
+        Ok(()) => println!("vault locked"),
+        Err(SshAgentError::NotRunning(_)) => println!("vault is already locked"),
+        Err(e) => exit_with_error(&e.to_string()),
     }
 }
 
-/// Unlock the vault with the resolved passphrase source.
+/// Unlock the vault by asking the running daemon to derive the identity.
+///
+/// The CLI keeps its passphrase sources; what changes is the destination: the
+/// daemon owns the lock, so an unlock is a control request, not a keychain write.
+/// A missing daemon is started first — the RPC needs someone to answer it.
 async fn unlock_vault(secret: UnlockSecret) {
-    let passphrase = secret.into_passphrase();
-    match DefaultApp::init().await {
-        InitResult::Ready(_) => {
-            println!("vault is already unlocked");
+    let socket = default_socket_path();
+    let passphrase = match secret.into_passphrase() {
+        Some(passphrase) => passphrase,
+        None => prompt_passphrase(UNLOCK_PROMPT),
+    };
+
+    if !client::responds(&socket) {
+        match handle_start(None) {
+            Ok(_) | Err(SshAgentError::AlreadyServing(_)) => {}
+            Err(e) => exit_with_error(&e.to_string()),
         }
-        InitResult::Locked(parts) => {
-            finish_init(parts, false, passphrase)
-                .await
-                .unwrap_or_else(|message| exit_with_error(&message));
-            println!("vault unlocked");
+    }
+
+    if client::status(&socket)
+        .ok()
+        .flatten()
+        .is_some_and(|status| control::reports_unlocked(&status))
+    {
+        println!("vault is already unlocked");
+        return;
+    }
+
+    match client::unlock(&socket, &passphrase) {
+        Ok(()) => println!("vault unlocked"),
+        Err(SshAgentError::UnlockRefused) => {
+            eprintln!("error: the daemon refused the passphrase");
+            std::process::exit(1);
         }
-        InitResult::NeedsPassphrase(parts) => {
-            finish_init(parts, true, passphrase)
-                .await
-                .unwrap_or_else(|message| exit_with_error(&message));
-            println!("vault unlocked");
-        }
-        InitResult::Failed { message } => exit_with_error(&message),
+        Err(e) => exit_with_error(&e.to_string()),
     }
 }
 
@@ -252,13 +268,12 @@ async fn unlock_vault(secret: UnlockSecret) {
 ///
 /// `passphrase` carries a resolved automation source: `Some` skips the terminal
 /// prompt entirely and uses the secret unchanged.
-async fn finish_init<K, F, I>(
-    parts: InitParts<K, F, I>,
+async fn finish_init<F, I>(
+    parts: InitParts<F, I>,
     first_run: bool,
     passphrase: Option<SecretString>,
-) -> Result<App<K, F, I>, String>
+) -> Result<App<F, I>, String>
 where
-    K: KeychainStore,
     F: VaultStorageFactory,
     I: IdentityStore,
 {
@@ -285,7 +300,6 @@ pub(crate) fn exit_with_error(message: &str) -> ! {
 /// For CLI mode, we prompt for passphrase if needed.
 async fn init_app() -> DefaultApp {
     match DefaultApp::init().await {
-        InitResult::Ready(app) => app,
         InitResult::NeedsPassphrase(parts) => {
             eprintln!("First run detected. Please set a passphrase to encrypt your identity.");
             finish_init(parts, true, None)
@@ -330,17 +344,42 @@ fn not_implemented() -> ! {
 /// here — it creates the identity, which the TUI cannot do yet.
 async fn launch_tui(ctx: TuiContext) {
     let app = match DefaultApp::init().await {
-        InitResult::Ready(app) => app,
         InitResult::NeedsPassphrase(parts) => finish_init(parts, true, None)
             .await
             .unwrap_or_else(|message| exit_with_error(&message)),
         InitResult::Locked(parts) => App::pending(parts),
         InitResult::Failed { message } => exit_with_error(&message),
     };
-    let tui = Tui::new(app, ctx).await.unwrap_or_else(|e| {
-        eprintln!("error initialising tui: {e}");
-        std::process::exit(1);
-    });
+
+    // The TUI owns the vault service, not the bootstrap app: the registry and the
+    // identity move into it, and the lock screen drives it directly. The service
+    // holds the identity in memory.
+    let App {
+        config,
+        identity,
+        registry,
+        identity_store,
+        lock_timeout,
+        ..
+    } = app;
+    let ring = Arc::new(Mutex::new(KeyRing::new()));
+    let mut service = VaultLock::new(
+        config.effective_identity_path(),
+        identity_store,
+        registry,
+        ring,
+    );
+    if let Some(identity) = identity {
+        service = service.with_identity(identity);
+    }
+
+    let tui = Tui::new(service, ctx)
+        .await
+        .map(|tui| tui.with_lock_timeout(lock_timeout))
+        .unwrap_or_else(|e| {
+            eprintln!("error initialising tui: {e}");
+            std::process::exit(1);
+        });
     if let Err(e) = tui.run().await {
         eprintln!("tui error: {e}");
         std::process::exit(1);

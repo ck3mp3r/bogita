@@ -2,6 +2,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 use crate::app::Tui;
 use crate::context::TuiContext;
+use bogita_core::agent::VaultService;
 use bogita_core::domain::FieldValue;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
@@ -35,16 +36,8 @@ async fn alt_s_in_edit_form_shows_save_modal_and_saves() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('s'), KeyModifiers::NONE);
     tui.flush_pending().await?;
 
-    let vaults = tui.app.registry.list_vaults().await?;
-    let vault = vaults.first().ok_or("should have a vault")?;
-    let identity = tui
-        .app
-        .identity
-        .as_ref()
-        .ok_or("should have an identity")?
-        .clone();
-    let svc = tui.app.registry.vault_service_for(vault, identity);
-    let reloaded = svc
+    let reloaded = tui
+        .service
         .get_entry(entry_id)
         .await?
         .ok_or("should have reloaded the entry")?;

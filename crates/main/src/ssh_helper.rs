@@ -1,16 +1,16 @@
+use bogita_cli::handlers::ssh_relay::{self, DaemonRelay};
 use bogita_cli::handlers::ssh_sign::{self, HelperAction, HelperError};
-use bogita_core::app::{DefaultApp, InitResult};
-use bogita_core::session::Session;
-use bogita_core::storage::keychain::platform_adapter;
+use bogita_core::agent::client;
+use bogita_core::agent::socket::default_socket_path;
 
 /// Answer one `gpg.ssh.program` invocation.
 ///
-/// The identity gate runs first, before the database is opened: a locked vault
-/// refuses every invocation with the contract message and exit code 1.
+/// The lock gate runs first, before any file work: the daemon owns the lock, so a
+/// missing or locked daemon refuses every invocation with the contract message
+/// and exit code 1.
 pub(crate) async fn run_ssh_sign_helper(args: Vec<String>) {
-    let session = keychain_session();
-    let (identity, action) = match ssh_sign::prepare(&args, &session) {
-        Ok(prepared) => prepared,
+    let action = match ssh_sign::prepare(daemon_status().as_deref(), &args) {
+        Ok(action) => action,
         Err(error) => exit_helper(&error),
     };
 
@@ -19,48 +19,37 @@ pub(crate) async fn run_ssh_sign_helper(args: Vec<String>) {
             Ok(code) => std::process::exit(code),
             Err(error) => exit_helper(&error),
         },
+        // The daemon signs from its ring: this process reads the requested public
+        // key, matches it against the advertised identities, and writes the armor.
         HelperAction::Sign(request) => {
-            let app = ready_app().await;
-            if let Err(error) = ssh_sign::handle_sign(&identity, &request, app.registry).await {
-                exit_helper(&error);
+            let mut relay = DaemonRelay::new(default_socket_path());
+            match ssh_relay::sign(&mut relay, &request) {
+                Ok(()) => {}
+                Err(error) => exit_helper(&error),
             }
         }
     }
 }
 
-/// Print the public key line of the only agent-servable key.
+/// Print the public key line of the only key the daemon serves.
 pub(crate) async fn run_ssh_default_key() {
-    let session = keychain_session();
-    let identity = match ssh_sign::gate(&session) {
-        Ok(identity) => identity,
-        Err(error) => exit_helper(&error),
-    };
-
-    let app = ready_app().await;
-    match ssh_sign::handle_default_key(&identity, app.registry).await {
-        Ok(line) => println!("{line}"),
+    match ssh_sign::gate(daemon_status().as_deref()) {
+        Ok(()) => {
+            let mut relay = DaemonRelay::new(default_socket_path());
+            match ssh_relay::default_key(&mut relay) {
+                Ok(line) => println!("{line}"),
+                Err(error) => exit_helper(&error),
+            }
+        }
         Err(error) => exit_helper(&error),
     }
 }
 
-/// Session over the real keychain, built through the composition seam.
+/// The daemon's status payload, or `None` when nothing answers.
 ///
-/// The helpers never prompt: an unusable platform keychain is reported as the
-/// locked-vault contract message with exit code 1.
-fn keychain_session() -> Session<bogita_core::storage::keychain::KeychainAdapter> {
-    match platform_adapter() {
-        Ok(adapter) => Session::new(adapter),
-        Err(_) => exit_helper(&HelperError::Locked),
-    }
-}
-
-/// Open the vault after the gate succeeded. Never prompts: an unexpected init
-/// result is reported as a locked vault.
-async fn ready_app() -> DefaultApp {
-    match DefaultApp::init().await {
-        InitResult::Ready(app) => app,
-        _ => exit_helper(&HelperError::Locked),
-    }
+/// An unreadable status counts as no daemon: the helper fails secure.
+fn daemon_status() -> Option<String> {
+    client::status(&default_socket_path()).ok().flatten()
 }
 
 /// Report a helper failure on stderr and stop with exit code 1.

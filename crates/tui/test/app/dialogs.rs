@@ -5,16 +5,14 @@
 use crate::app::bindings;
 use crate::app::Tui;
 use crate::context::TuiContext;
-use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
-use bogita_core::test_support::MockKeychain;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::Terminal;
 
-use super::support::{make_app, make_app_with_entry};
+use super::support::{make_app, make_app_with_entry, TestService};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-type TestTui = Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>;
+type TestTui = Tui<TestService>;
 
 const NO_CHANGES: &str = "No changes to save";
 

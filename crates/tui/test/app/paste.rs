@@ -2,19 +2,14 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 use crate::app::Tui;
 use crate::context::TuiContext;
+use bogita_core::agent::VaultService;
 use bogita_core::domain::{FieldValue, SshKeyMaterial};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::support::make_app;
+use super::support::{make_app, TestService};
 
 /// Open an add form with one SshKey row focused on its value slot.
-async fn ssh_form_on_value_slot(
-    tui: &mut Tui<
-        bogita_core::test_support::MockKeychain,
-        bogita_core::ports::SqliteStorageFactory,
-        bogita_core::ports::EncryptedIdentityFile,
-    >,
-) {
+async fn ssh_form_on_value_slot(tui: &mut Tui<TestService>) {
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
     for c in "Deploy key".chars() {
@@ -49,17 +44,9 @@ async fn paste_keeps_newlines_in_ssh_value() -> Result<()> {
     tui.flush_pending().await?;
 
     // -- Check: the stored value keeps every PEM line and still validates
-    let vaults = tui.app.registry.list_vaults().await?;
-    let vault = vaults.first().ok_or("should have a vault")?;
-    let identity = tui
-        .app
-        .identity
-        .as_ref()
-        .ok_or("should have an identity")?
-        .clone();
-    let svc = tui.app.registry.vault_service_for(vault, identity);
-    let stored = svc
-        .list_entries(vault.id, None)
+    let stored = tui
+        .service
+        .all_entries()
         .await?
         .into_iter()
         .next()
@@ -114,17 +101,9 @@ async fn paste_normalizes_crlf_to_lf() -> Result<()> {
     tui.flush_pending().await?;
 
     // -- Check
-    let vaults = tui.app.registry.list_vaults().await?;
-    let vault = vaults.first().ok_or("should have a vault")?;
-    let identity = tui
-        .app
-        .identity
-        .as_ref()
-        .ok_or("should have an identity")?
-        .clone();
-    let svc = tui.app.registry.vault_service_for(vault, identity);
-    let stored = svc
-        .list_entries(vault.id, None)
+    let stored = tui
+        .service
+        .all_entries()
         .await?
         .into_iter()
         .next()

@@ -11,36 +11,28 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 use crate::app::Tui;
 use crate::context::TuiContext;
-use bogita_core::app::App;
-use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
-use bogita_core::test_support::{test_entry, MockKeychain};
+use bogita_core::agent::VaultService;
+use bogita_core::test_support::test_entry;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::Terminal;
 
-use super::support::make_app;
+use super::support::{make_app, TestService};
 
-type TestApp = App<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>;
-type TestTui = Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>;
+type TestTui = Tui<TestService>;
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
 /// An app whose Personal vault holds `count` entries, named `entry-0`..
-async fn make_app_with_entries(count: usize) -> Result<TestApp> {
-    let app = make_app().await?;
-    let vaults = app.registry.list_vaults().await?;
+async fn make_app_with_entries(count: usize) -> Result<TestService> {
+    let service = make_app().await?;
+    let vaults = service.list_vaults().await?;
     let vault = vaults.first().ok_or("should have a vault")?;
-    let identity = app
-        .identity
-        .as_ref()
-        .ok_or("should have an identity")?
-        .clone();
-    let svc = app.registry.vault_service_for(vault, identity);
     for i in 0..count {
         let entry = test_entry(vault.id, &format!("entry-{i}"), vec![]);
-        svc.save_entry(&entry).await?;
+        service.save_entry(&entry).await?;
     }
-    Ok(app)
+    Ok(service)
 }
 
 /// One iteration of the live loop: draw, deliver the key, drain the actions.

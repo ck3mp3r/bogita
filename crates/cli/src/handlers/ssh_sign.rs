@@ -1,19 +1,17 @@
 //! Hidden git signing helper — the `gpg.ssh.program` contract.
 //!
 //! git runs `gpg.ssh.program` for both signing and verifying SSH signatures.
-//! The sign shape is answered from the vault; every other shape is forwarded
-//! verbatim to `ssh-keygen`, so `allowed_signers` handling stays ssh-keygen's.
+//! The sign shape is relayed to the agent daemon, which holds the only key copy;
+//! every other shape is forwarded verbatim to `ssh-keygen`, so `allowed_signers`
+//! handling stays ssh-keygen's.
 //!
-//! Identity gate: the helper reads the staged identity from the keychain and
-//! never stores, deletes, or prompts for it.
+//! Identity gate: the helper reads the DAEMON'S lock state off the agent socket
+//! and never stores, deletes, or prompts for identity material. The sign and
+//! default-key shapes relay onto that same socket, so no private key reaches this
+//! process.
 
-use bogita_core::agent::KeyRing;
-use bogita_core::domain::{AgeIdentity, Entry, FieldType, SshKeyMaterial};
-use bogita_core::error::Error as VaultError;
-use bogita_core::ports::{KeychainStore, Storage};
-use bogita_core::session::Session;
-use bogita_core::vault::registry::VaultRegistry;
-use ssh_key::{HashAlg, LineEnding, PrivateKey, PublicKey, SshSig};
+use bogita_core::agent::control;
+use ssh_key::{HashAlg, PublicKey};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -50,11 +48,11 @@ pub const GIT_SIGN_ARGV: &[&str] = &[
     "<data-file>",
 ];
 
-/// Printed when the keychain holds no identity. Nothing else may appear on
-/// the helper's stderr for this case.
+/// Printed when the agent daemon does not report an unlocked ring. Nothing else
+/// may appear on the helper's stderr for this case.
 pub const LOCKED_MESSAGE: &str = "vault is locked; run bogita unlock";
 
-/// Printed when no stored SSH key matches the requested public key.
+/// Printed when the daemon serves no key that matches the requested public key.
 pub const NO_MATCH_MESSAGE: &str = "no vault key matches user.signingKey";
 
 /// Printed by the default-key subcommand when the agent serves no key.
@@ -64,7 +62,7 @@ pub const NO_SERVABLE_MESSAGE: &str = "no agent-servable keys";
 pub const MULTIPLE_SERVABLE_MESSAGE: &str = "multiple agent-servable keys; set user.signingKey";
 
 /// Hash algorithm git's signatures use (ssh-keygen's sshsig default).
-const SIGN_HASH_ALG: HashAlg = HashAlg::Sha512;
+pub(crate) const SIGN_HASH_ALG: HashAlg = HashAlg::Sha512;
 
 // endregion: --- Constants
 
@@ -73,7 +71,7 @@ const SIGN_HASH_ALG: HashAlg = HashAlg::Sha512;
 /// What a helper invocation means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelperAction {
-    /// The captured sign shape: answer it from the vault.
+    /// The captured sign shape: relay it to the agent daemon.
     Sign(SignRequest),
     /// Anything else: run `ssh-keygen` with these arguments unchanged.
     Forward(Vec<String>),
@@ -88,17 +86,17 @@ pub struct SignRequest {
     pub key_file: PathBuf,
     /// File holding the data to sign; the armor goes to `<data-file>.sig`.
     pub data_file: PathBuf,
-    /// git's `-U`: sign with the key named by its public half. The vault key is
-    /// the signing key, so the flag is accepted and does not change the path.
+    /// git's `-U`: sign with the key named by its public half. The daemon's key
+    /// is the signing key, so the flag is accepted and does not change the path.
     pub use_agent: bool,
 }
 
 /// Why the helper refused to work.
 #[derive(Debug)]
 pub enum HelperError {
-    /// No staged identity: the vault is locked.
+    /// The daemon does not report an unlocked ring: the vault is locked.
     Locked,
-    /// The requested public key is not in any vault.
+    /// The requested public key is not served by the agent.
     NoMatchingKey,
     /// The agent serves no key.
     NoAgentServableKeys,
@@ -112,8 +110,6 @@ pub enum HelperError {
     Key(String),
     /// `ssh-keygen` could not be spawned.
     Spawn(String),
-    /// The vault read failed.
-    Vault(VaultError),
 }
 
 impl fmt::Display for HelperError {
@@ -127,7 +123,6 @@ impl fmt::Display for HelperError {
             Self::Write { path, source } => write!(f, "cannot write {}: {source}", path.display()),
             Self::Key(message) => write!(f, "cannot use the SSH key: {message}"),
             Self::Spawn(message) => write!(f, "cannot run ssh-keygen: {message}"),
-            Self::Vault(error) => write!(f, "{error}"),
         }
     }
 }
@@ -136,15 +131,8 @@ impl std::error::Error for HelperError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Read { source, .. } | Self::Write { source, .. } => Some(source),
-            Self::Vault(error) => Some(error),
             _ => None,
         }
-    }
-}
-
-impl From<VaultError> for HelperError {
-    fn from(error: VaultError) -> Self {
-        Self::Vault(error)
     }
 }
 
@@ -154,30 +142,23 @@ impl From<VaultError> for HelperError {
 
 /// Gate the helper, then route the invocation.
 ///
-/// The identity gate runs before routing and before any file work, so a locked
-/// vault answers every helper invocation with the same message and exit code.
-/// No stored key material is touched on the locked path.
-pub fn prepare<K>(
-    args: &[String],
-    session: &Session<K>,
-) -> Result<(AgeIdentity, HelperAction), HelperError>
-where
-    K: KeychainStore,
-{
-    let identity = gate(session)?;
-    Ok((identity, route(args)))
+/// The lock gate runs before routing and before any file work, so a locked vault
+/// answers every helper invocation with the same message and exit code. No key
+/// material is touched on the locked path.
+pub fn prepare(status: Option<&str>, args: &[String]) -> Result<HelperAction, HelperError> {
+    gate(status)?;
+    Ok(route(args))
 }
 
-/// Read the staged identity. Read-only: never stores, deletes, or prompts.
-pub fn gate<K>(session: &Session<K>) -> Result<AgeIdentity, HelperError>
-where
-    K: KeychainStore,
-{
-    session
-        .get_identity()
-        .ok()
-        .flatten()
-        .ok_or(HelperError::Locked)
+/// Check the daemon's lock state. Read-only: never stores, deletes, or prompts.
+///
+/// `status` is the agent's status payload, or `None` when nothing answers on the
+/// socket. Anything but an unlocked ring is the locked-vault contract message.
+pub fn gate(status: Option<&str>) -> Result<(), HelperError> {
+    match status {
+        Some(payload) if control::reports_unlocked(payload) => Ok(()),
+        _ => Err(HelperError::Locked),
+    }
 }
 
 /// Map one argv to exactly one action.
@@ -189,89 +170,6 @@ pub fn route(args: &[String]) -> HelperAction {
 }
 
 // endregion: --- Entry point
-
-// region:    --- Sign path
-
-/// Sign `request.data_file` with the vault key that matches `request.key_file`
-/// and write the armor to `<data-file>.sig`.
-pub async fn handle_sign<S>(
-    identity: &AgeIdentity,
-    request: &SignRequest,
-    registry: VaultRegistry<S>,
-) -> Result<(), HelperError>
-where
-    S: Storage,
-{
-    let entries = all_entries(&registry, identity).await?;
-    sign_data(&entries, request)
-}
-
-/// Resolve the requested public key against `entries`, sign, and write the
-/// signature next to the data file.
-pub fn sign_data(entries: &[Entry], request: &SignRequest) -> Result<(), HelperError> {
-    let requested = read_public_key(&request.key_file)?;
-    let pem = match_key_pem(entries, &requested).ok_or(HelperError::NoMatchingKey)?;
-    let data = read(&request.data_file)?;
-    let signature = sign_bytes(&pem, &request.namespace, &data)?;
-    let path = signature_path(&request.data_file);
-    write(&path, signature.as_bytes())
-}
-
-/// The private PEM of the entry that holds the requested key, compared on the
-/// wire form so a differing comment does not matter.
-fn match_key_pem(entries: &[Entry], requested: &PublicKey) -> Option<String> {
-    entries.iter().find_map(|entry| {
-        let pem = private_pem(entry)?;
-        let material = SshKeyMaterial::validate(pem).ok()?;
-        let stored = PublicKey::from_openssh(material.public_line()).ok()?;
-        (stored.key_data() == requested.key_data()).then(|| material.private_pem().to_string())
-    })
-}
-
-/// Produce the SSHSIG armor for `data`.
-fn sign_bytes(pem: &str, namespace: &str, data: &[u8]) -> Result<String, HelperError> {
-    let key = PrivateKey::from_openssh(pem.as_bytes())
-        .map_err(|error| HelperError::Key(error.to_string()))?;
-    let signature: SshSig = key
-        .sign(namespace, SIGN_HASH_ALG, data)
-        .map_err(|error| HelperError::Key(error.to_string()))?;
-    signature
-        .to_pem(LineEnding::LF)
-        .map_err(|error| HelperError::Key(error.to_string()))
-}
-
-// endregion: --- Sign path
-
-// region:    --- Default key path
-
-/// Print the public key line of the only agent-servable key.
-///
-/// Zero or several servable keys are an error: the helper never picks silently.
-pub async fn handle_default_key<S>(
-    identity: &AgeIdentity,
-    registry: VaultRegistry<S>,
-) -> Result<String, HelperError>
-where
-    S: Storage,
-{
-    let entries = all_entries(&registry, identity).await?;
-    default_key_line(&entries)
-}
-
-/// The default-key rule over a set of entries.
-pub fn default_key_line(entries: &[Entry]) -> Result<String, HelperError> {
-    let mut ring = KeyRing::new();
-    ring.load_entries(entries.iter().cloned());
-    match ring.entries() {
-        [] => Err(HelperError::NoAgentServableKeys),
-        [key] => PublicKey::new(key.public_key().clone(), key.comment())
-            .to_openssh()
-            .map_err(|error| HelperError::Key(error.to_string())),
-        _ => Err(HelperError::MultipleAgentServableKeys),
-    }
-}
-
-// endregion: --- Default key path
 
 // region:    --- Forward path
 
@@ -321,45 +219,20 @@ fn parse_sign(args: &[String]) -> Option<SignRequest> {
     })
 }
 
-/// Every entry of every vault, decrypted with `identity`.
-async fn all_entries<S>(
-    registry: &VaultRegistry<S>,
-    identity: &AgeIdentity,
-) -> Result<Vec<Entry>, HelperError>
-where
-    S: Storage,
-{
-    let mut entries = Vec::new();
-    for vault in registry.list_vaults().await? {
-        let service = registry.vault_service_for(&vault, identity.clone());
-        entries.extend(service.list_entries(vault.id, None).await?);
-    }
-    Ok(entries)
-}
-
-/// The stored OpenSSH private key PEM, if the entry has one.
-fn private_pem(entry: &Entry) -> Option<String> {
-    entry
-        .fields
-        .iter()
-        .find(|field| field.field_type == FieldType::SshPrivateKey)
-        .map(|field| field.value.to_string())
-}
-
 /// The path git expects the armor at: exactly `<data-file>.sig`.
-fn signature_path(data_file: &Path) -> PathBuf {
+pub(crate) fn signature_path(data_file: &Path) -> PathBuf {
     let mut path = data_file.as_os_str().to_owned();
     path.push(".sig");
     PathBuf::from(path)
 }
 
 /// Parse the public key line git wrote to the key file.
-fn read_public_key(path: &Path) -> Result<PublicKey, HelperError> {
+pub(crate) fn read_public_key(path: &Path) -> Result<PublicKey, HelperError> {
     let contents = read_text(path)?;
     PublicKey::from_openssh(contents.trim()).map_err(|error| HelperError::Key(error.to_string()))
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, HelperError> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>, HelperError> {
     std::fs::read(path).map_err(|source| HelperError::Read {
         path: path.to_path_buf(),
         source,
@@ -373,7 +246,7 @@ fn read_text(path: &Path) -> Result<String, HelperError> {
     })
 }
 
-fn write(path: &Path, contents: &[u8]) -> Result<(), HelperError> {
+pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<(), HelperError> {
     std::fs::write(path, contents).map_err(|source| HelperError::Write {
         path: path.to_path_buf(),
         source,
@@ -384,10 +257,14 @@ fn write(path: &Path, contents: &[u8]) -> Result<(), HelperError> {
 
 // region:    --- Tests
 #[cfg(test)]
+#[path = "../../test/handlers/ssh_sign/support.rs"]
+mod ssh_sign_support;
+
+#[cfg(test)]
 #[path = "../../test/handlers/ssh_sign.rs"]
 mod ssh_sign_test;
 
-#[cfg(all(test, feature = "integration"))]
-#[path = "../../test/handlers/ssh_sign_roundtrip.rs"]
-mod ssh_sign_roundtrip_test;
+#[cfg(test)]
+#[path = "../../test/handlers/ssh_sign/gate.rs"]
+mod ssh_sign_gate_test;
 // endregion: --- Tests

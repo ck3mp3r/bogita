@@ -38,20 +38,19 @@ App struct in crates/core/src/app.rs is the composition root.
 ### External State Isolation
 
 Debug and production state are separated at compile time by the `cfg(debug_assertions)` gate, which
-is compiled into exactly two places: the `APP_NAME` const
-(`crates/core/src/storage/config.rs:10-21`) and the keychain service name in
-`KeychainAdapter::new` (`crates/core/src/storage/keychain.rs:15-18`). Every other external-state
-touchpoint - vault database, identity file, config, logs, sockets - derives its identifying string
-from one of those two sites, so a debug binary cannot open the production database or keychain
-entry by default - only an explicit path override in `config.toml` can cross the line.
+is compiled into exactly one place: the `APP_NAME` const
+(`crates/core/src/storage/config.rs:18-22`). Every other external-state touchpoint - vault database,
+identity file, config, logs, sockets - derives its identifying string from that one site, so a debug
+binary cannot open the production database or socket by default - only an explicit path override in
+`config.toml` can cross the line.
 `[profile.release-with-debug]`
 (`Cargo.toml:21-24`) inherits `release`, which leaves `debug_assertions` off, so a
-release-with-debug build runs production state by design, not as a dev build.
+release-with-debug build runs production state by design, not as a dev build. The keychain that was
+the second gate site is gone with the daemon-held lock: no credential store carries state now.
 
-- Any new external-state touchpoint - file path, socket path, keychain service or account, temp
-  artifact - derives its identifying string from the `APP_NAME`-gated consts in
-  `crates/core/src/storage/config.rs:10-21` and its keychain service from the gate in
-  `crates/core/src/storage/keychain.rs:15-18`. Never hardcode `bogita` or `bogita-dev` elsewhere.
+- Any new external-state touchpoint - file path, socket path, temp artifact - derives its
+  identifying string from the `APP_NAME`-gated consts in `crates/core/src/storage/config.rs:18-22`.
+  Never hardcode `bogita` or `bogita-dev` elsewhere.
 
 The agent socket is the cautionary precedent: a first version never passed through the gate, was
 dead stub wiring, and was deleted in commit 72ca50f. The reinstated socket derives its path from
@@ -59,23 +58,30 @@ the gated consts (`crates/core/src/agent/socket.rs`, `default_socket_path`).
 
 ### SSH Agent Lock Interlock
 
-The daemon reads the staged age identity and nothing else: it never stages the item and never
-deletes it. It polls the item every 500 ms (`POLL_INTERVAL` in
-`crates/core/src/agent/watcher.rs`) and derives lock state from presence alone. Unlock writes the
-item (TUI, `bogita unlock`), lock deletes it (`bogita lock`, the TUI auto-lock at its own timeout,
-and every TUI exit — quit keys, Ctrl-C, SIGINT/SIGHUP/SIGTERM).
+The daemon owns the lock, and the lock is a control request rather than a file on disk. `bogita
+vault unlock` sends the passphrase over the agent socket (`UNLOCK_EXTENSION`); the daemon derives
+the identity from the encrypted identity file, rebuilds the key ring from the vault, and keeps the
+identity in memory. `bogita vault lock` sends `LOCK_EXTENSION`; the daemon drops the identity, clears
+the ring, and forbids a rebuild. The TUI drives the same service in-process and sends the lock
+request on its way out. Nothing is staged, nothing is deleted, and no process reads a credential
+store.
 
-- Item present: the key ring is rebuilt from the vault. Re-population on unlock is deliberate. The
-  staged identity is already the unlocked-state exposure, so reading it adds no surface, and
-  refusing to re-populate would leave the agent dead after every unlock.
-- Item absent: the ring is cleared and rebuilds are refused. Subsequent requests answer FAILURE(5).
-- `lock_timeout = Some(n)`: the ring is evicted after `n` seconds without a served request. The cap
-  is defeat-proof against request-driven re-population: rebuilds stay refused until the watcher
-  observes the full cycle (item absent, then present again), so a request alone cannot revive an
-  evicted ring. `lock_timeout = None` never evicts on idleness.
+- Locked: the ring is empty and rebuilds are refused, so every request answers FAILURE(5).
+- Unlock: the ring is rebuilt from the vault and the derived identity stays as the service's
+  unlocked state, which is what entry reads and writes need. That residency lasts from unlock to
+  lock and is the recorded exposure change: the identity is not on disk, but it is live in the
+  daemon process for that window.
+- Unlock is the only way into the ring. A lock request, the idle cap, and every TUI exit all reach
+  the same `VaultService::lock`, and a rebuild after a lock needs a new unlock request.
+- `lock_timeout = Some(n)`: idle eviction is the same lock, not a ring-only reset. After `n` seconds
+  without a served request `IdleWatch` (`crates/core/src/agent/unlock.rs`) calls
+  `VaultService::lock`, so an idle-evicted daemon holds no key material in memory. The cap is
+  defeat-proof against request-driven re-population: only an unlock request permits a rebuild, so a
+  request storm cannot revive an evicted ring. `lock_timeout = None` never evicts on idleness.
 - A request that already holds the ring finishes and returns its signature. Requests that arrive
-  after eviction answer FAILURE(5). Detection is at most one poll interval late.
-- `grep -rn "store_identity\|delete_identity" crates/core/src/agent/` must stay empty.
+  after a lock answer FAILURE(5), with no detection delay: the lock is a state change, not a
+  polled observation.
+- `grep -rn "store_identity\|delete_identity\|KeychainStore\|KeychainAdapter\|keychain_service\|keyring::Entry" crates/` must stay empty.
 
 ## SSH Agent daemon
 
@@ -83,17 +89,21 @@ Bogita serves SSH keys held in the vault over its own RFC 9987 unix-socket daemo
 never exported: IDENTITIES_ANSWER carries public blobs only, and the daemon answers list
 and sign requests from an in-memory ring built at unlock time.
 
-- Code: `crates/core/src/agent/` holds nine files: `mod.rs` (exports), `client.rs`
+- Code: `crates/core/src/agent/` holds eleven files: `mod.rs` (exports), `client.rs`
   (blocking control-channel and identity-list client), `control.rs` (control-extension
   names, status payload, stop-and-drain handle), `error.rs` (`SshAgentError`), `keyring.rs`
   (unlock-time cache, zeroize on drop, signing), `server.rs` (serve loop, frame cap, peer
-  gate, control extensions, termination watch), `signals.rs` (SIGINT and SIGHUP handlers
+  gate, control extensions, termination watch), `server/session.rs` (one connection: list,
+  sign, and the four control extensions), `signals.rs` (SIGINT and SIGHUP handlers
   that raise the stop flag), `socket.rs` (path derivation, 0700/0600 hardening, the parent
-  heal of a too-open data dir, the peer-uid gate), `watcher.rs` (keychain-presence lock
-  watcher). CLI:
+  heal of a too-open data dir, the peer-uid gate), `source.rs` (where a ring rebuild reads
+  entries from), `unlock.rs` (the `VaultService` trait, the `VaultLock` service, the
+  `NoLock` stub, and the `IdleWatch` idle cap). CLI:
   `crates/cli/src/handlers/agent.rs` holds the four lifecycle commands and the detached
   spawn; `crates/main/src/main.rs` holds the hidden `--internal` child entry point, the
-  git-helper intercept, and the dispatch to the CLI handlers. The SIGINT/SIGHUP mapping
+  git-helper intercept, and the dispatch to the CLI handlers; `crates/main/src/agent.rs`
+  composes the daemon: it builds the `VaultLock` service, spawns `IdleWatch`, and serves.
+  The SIGINT/SIGHUP mapping
   does not live in `main.rs`: `signals.rs` installs the handlers and `watch_termination`
   in `server.rs` maps the flag onto the stop path, both started by `serve_with_signals`,
   which the child calls.
@@ -120,6 +130,8 @@ Wire surface, as shipped (`ssh-agent-lib` 0.6 decodes exactly these numbers):
 | REQUEST_IDENTITIES (11) | IDENTITIES_ANSWER (12): one public blob plus comment per served key |
 | SIGN_REQUEST (13) | SIGN_RESPONSE (14); FAILURE (5) while locked or when the key is not cached |
 | EXTENSION (27) `bogita-status@bogita` | EXTENSION_RESPONSE (29) with `<N> keys, <locked\|unlocked>` |
+| EXTENSION (27) `bogita-unlock@bogita` | SUCCESS (6) once the ring serves the vault; FAILURE (5) on a refused passphrase. The details carry the passphrase and are never echoed |
+| EXTENSION (27) `bogita-lock@bogita` | SUCCESS (6); the daemon drops the identity, clears the ring, and forbids a rebuild |
 | EXTENSION (27) `bogita-stop@bogita` | SUCCESS (6), then a bounded drain and socket unlink |
 | any other EXTENSION (27) name | EXTENSION_FAILURE (28) |
 | any other decodable number (17-23, 25, 26) | FAILURE (5) |
@@ -134,22 +146,34 @@ hardcode the path. `--socket <path>` is an explicit operator override on `agent 
 `stop`, `status` and `keys` always use the derived path.
 
 Lock and timeout semantics: see SSH Agent Lock Interlock above. In one line each: lock
-clears the ring and every later request answers FAILURE (5); unlock rebuilds the ring from
-the vault; `lock_timeout = Some(n)` evicts after `n` idle seconds and refuses rebuilds
-until the watcher observes the full absent-then-present cycle.
+drops the held identity, clears the ring, and forbids a rebuild, so every later request
+answers FAILURE (5); unlock derives the identity, rebuilds the ring from the vault, and is the
+only request that permits a rebuild; `lock_timeout = Some(n)` applies the same lock after `n`
+idle seconds, so revival needs a new unlock request.
 
-Git signing helper (S7): `bogita` doubles as git's `gpg.ssh.program`. The binary answers
-git's `-Y` argument line before clap, signs with the vault key that matches the requested
-public key, and forwards every verify shape to the system `ssh-keygen`, so
-`allowed_signers` handling stays OpenSSH's. Hidden subcommands: `ssh-sign-helper` (for
-wrapper scripts) and `ssh-default-key` (for `gpg.ssh.defaultKeyCommand`). Two non-negotiable
-rules: the helper NEVER prompts - a locked vault exits 1 with `vault is locked; run bogita
-unlock` - and it NEVER writes the keychain: it is a read-only consumer of the staged
-identity, the same rule the watcher follows.
+Git signing helper (S7). `bogita` doubles as git's `gpg.ssh.program`. The binary answers
+git's `-Y` argument line before clap and forwards every verify shape to the system
+`ssh-keygen`, so `allowed_signers` handling stays OpenSSH's. Hidden subcommands:
+`ssh-sign-helper` (for wrapper scripts) and `ssh-default-key` (for
+`gpg.ssh.defaultKeyCommand`). The helper is a CLIENT of the daemon socket: the lock gate
+runs first, then the sign shape reads the requested public key from git's key file, asks
+the daemon for its identities, matches on the wire form, relays one SIGN_REQUEST, and
+writes the SshSig armor git expects to `<data-file>.sig`. `ssh-default-key` answers from
+the same identities reply: zero served keys prints `no agent-servable keys`, several
+prints `multiple agent-servable keys; set user.signingKey`, one prints its public line.
+RSA requests carry flag `0x0000_0004` so the reply is rsa-sha2-512; Ed25519 sends zero.
+Code: `crates/cli/src/handlers/ssh_relay.rs` (the relay and its `AgentRelay` port),
+`crates/cli/src/handlers/ssh_sign.rs` (gate, router, forward, messages), and
+`crates/main/src/ssh_helper.rs` (the socket glue). Four rules hold: the helper NEVER
+prompts, it NEVER writes state other than the signature file git asked for, it NEVER holds
+private key material, and it NEVER reaches the vault. A locked vault or an absent daemon
+exits 1 with `vault is locked; run bogita unlock`; a key the ring does not serve exits 1
+with `no vault key matches user.signingKey`.
 
 TUI: v1 ships no agent surface - no status pane, no leader-mode binding. The daemon is a
-separate process whose state the TUI does not own, and the TUI lock screen already reflects
-the shared keychain signal. Deferred, revisit after v1.
+separate process whose state the TUI does not own; the TUI holds its own vault service. The
+one crossing is the exit lock, which sends the daemon's `LOCK_EXTENSION` so a TUI quit stops
+the daemon serving too. Deferred, revisit after v1.
 
 ## Testing Philosophy
 
@@ -689,8 +713,12 @@ Every exit locks the vault — the loop end is the only exit tail:
   SIGTERM (the daemon's `signals.rs` shape plus SIGTERM). `run()` installs them and the event
   loop polls the flag on every tick, so the 250 ms `event::poll` bounds the delay.
 - Order: `run()` calls `ratatui::restore()` first and then `lock_at_exit`, so a failing lock
-  still leaves a usable terminal. `lock_at_exit` deletes the staged keychain identity and
-  retries once; two failures print to stderr and exit 3.
+  still leaves a usable terminal. `lock_at_exit` does two things. It calls `VaultService::lock`,
+  which drops the held identity and evicts the local ring and cannot fail. It then sends the
+  daemon's `LOCK_EXTENSION` over `default_socket_path()`, best effort: a missing or dead daemon
+  is ignored, and the same-uid gate on the socket keeps the request from reaching another
+  user's daemon.
 - The lock does not depend on `lock_timeout`: the idle timer is optional, the exit lock is not.
-  The daemon watcher then answers FAILURE(5) within one 500 ms poll.
+  After the request the daemon holds no identity and answers FAILURE(5) to the next request;
+  there is no poll to wait for.
 - SIGKILL (`kill -9`) cannot be caught — `bogita lock` and the auto-lock timer cover that case.

@@ -3,14 +3,12 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 use crate::app::bindings;
 use crate::app::Tui;
 use crate::context::TuiContext;
-use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
-use bogita_core::test_support::MockKeychain;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
-use super::support::{make_app, make_app_with_entry};
+use super::support::{make_app, make_app_with_entry, TestService};
 
 /// Press one unmodified key.
-fn key(tui: &mut Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>, k: KeyCode) {
+fn key(tui: &mut Tui<TestService>, k: KeyCode) {
     tui.handle_key_with_modifiers(k, KeyModifiers::NONE);
 }
 

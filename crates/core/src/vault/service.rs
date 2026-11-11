@@ -1,4 +1,4 @@
-//! VaultService — application layer coordinating entry operations over the storage adapter.
+//! VaultEntryService — application layer coordinating entry operations over the storage adapter.
 
 use crate::domain::{AgeIdentity, AgeRecipient, Entry};
 use crate::error::Result;
@@ -9,7 +9,7 @@ use uuid::Uuid;
 ///
 /// Encrypted fields are written through the storage adapter with this vault's
 /// recipients; reads pass the caller's identity to the same adapter.
-pub struct VaultService<S>
+pub struct VaultEntryService<S>
 where
     S: EntryStore,
 {
@@ -18,7 +18,7 @@ where
     identity: AgeIdentity,
 }
 
-impl<S> VaultService<S>
+impl<S> VaultEntryService<S>
 where
     S: EntryStore,
 {

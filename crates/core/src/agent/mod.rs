@@ -11,11 +11,13 @@ pub mod keyring;
 pub mod server;
 pub mod signals;
 pub mod socket;
-pub mod watcher;
+pub mod source;
+pub mod unlock;
 
 pub use client::ServedKey;
 pub use error::SshAgentError;
 pub use keyring::{KeyRing, KeyRingEntry, SharedKeyRing};
-pub use server::{serve, serve_with_signals, BogitaSession};
+pub use server::{serve, serve_with_lock, serve_with_signals, BogitaSession};
 pub use socket::{default_socket_path, SocketGuard};
-pub use watcher::{LockEvent, LockMonitor, LockWatcher, UnlockSource};
+pub use source::UnlockSource;
+pub use unlock::{IdleWatch, NoLock, VaultLock, VaultService};

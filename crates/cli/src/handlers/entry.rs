@@ -8,7 +8,7 @@ use bogita_core::domain::{
 use bogita_core::error::{DbError, Error, Result, ValidationError};
 use bogita_core::ports::Storage;
 use bogita_core::vault::registry::VaultRegistry;
-use bogita_core::vault::service::VaultService;
+use bogita_core::vault::service::VaultEntryService;
 
 use super::resolve_vault;
 
@@ -319,7 +319,7 @@ where
 }
 
 /// Find one entry by name in the resolved vault.
-async fn find_entry<S>(svc: &VaultService<&S>, vault_id: Uuid, name: &str) -> Result<Entry>
+async fn find_entry<S>(svc: &VaultEntryService<&S>, vault_id: Uuid, name: &str) -> Result<Entry>
 where
     S: Storage,
 {

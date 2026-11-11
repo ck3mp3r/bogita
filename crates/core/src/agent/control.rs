@@ -1,7 +1,7 @@
 //! Vendor-extension control channel of the agent daemon.
 //!
 //! RFC 9987 EXTENSION(27) carries vendor extensions. The agent answers exactly
-//! two names and refuses every other one with EXTENSION_FAILURE(28). Extension
+//! four names and refuses every other one with EXTENSION_FAILURE(28). Extension
 //! names carry the implementation domain, as RFC 4251 § 4.2 requires.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -16,6 +16,13 @@ pub const STOP_EXTENSION: &str = "bogita-stop@bogita";
 /// Status request: answers EXTENSION_RESPONSE(29) with [`status_payload`].
 pub const STATUS_EXTENSION: &str = "bogita-status@bogita";
 
+/// Unlock request: the details carry the passphrase. Answers SUCCESS(6) once the
+/// ring serves the vault, or FAILURE(5) on a wrong passphrase. Never echoed.
+pub const UNLOCK_EXTENSION: &str = "bogita-unlock@bogita";
+
+/// Lock request: no details. Answers SUCCESS(6) and evicts the ring.
+pub const LOCK_EXTENSION: &str = "bogita-lock@bogita";
+
 /// Upper bound for waiting on in-flight sessions after a stop request.
 pub const GRACEFUL_DRAIN: Duration = Duration::from_secs(5);
 
@@ -23,6 +30,11 @@ pub const GRACEFUL_DRAIN: Duration = Duration::from_secs(5);
 pub fn status_payload(key_count: usize, locked: bool) -> String {
     let state = if locked { "locked" } else { "unlocked" };
     format!("{key_count} keys, {state}")
+}
+
+/// True when a status payload reports an unlocked ring.
+pub fn reports_unlocked(payload: &str) -> bool {
+    payload.ends_with(", unlocked")
 }
 
 // endregion: --- Protocol

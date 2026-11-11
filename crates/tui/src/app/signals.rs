@@ -4,11 +4,10 @@
 //! event, not as SIGINT (`keys.rs` maps it). The signals handled here are the
 //! ones the process receives from the outside: SIGINT from `kill -INT`, SIGHUP
 //! when the terminal closes, and SIGTERM from `kill`. Each one must reach the
-//! exit tail in `tui.rs`, so the staged keychain identity is deleted instead
-//! of a bare process death.
+//! exit tail in `tui.rs`, so the vault is locked instead of a bare process death.
 //!
-//! SIGKILL (`kill -9`) cannot be caught: it leaves the identity staged. The
-//! auto-lock timer and `bogita lock` cover that case.
+//! SIGKILL (`kill -9`) cannot be caught: it leaves the vault unlocked in the
+//! daemon. The auto-lock timer and `bogita lock` cover that case.
 //!
 //! The handler only stores a flag — the one thing that is async-signal-safe
 //! here — and the event loop polls it on every tick.
