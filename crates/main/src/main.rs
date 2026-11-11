@@ -324,15 +324,17 @@ fn not_implemented() -> ! {
 }
 
 /// Context passed to the TUI on startup to pre-focus the right view.
+///
+/// A locked vault boots as a locked app: the TUI's own lock screen asks for the
+/// passphrase, so no terminal prompt runs on this path. First run still prompts
+/// here — it creates the identity, which the TUI cannot do yet.
 async fn launch_tui(ctx: TuiContext) {
     let app = match DefaultApp::init().await {
         InitResult::Ready(app) => app,
         InitResult::NeedsPassphrase(parts) => finish_init(parts, true, None)
             .await
             .unwrap_or_else(|message| exit_with_error(&message)),
-        InitResult::Locked(parts) => finish_init(parts, false, None)
-            .await
-            .unwrap_or_else(|message| exit_with_error(&message)),
+        InitResult::Locked(parts) => App::pending(parts),
         InitResult::Failed { message } => exit_with_error(&message),
     };
     let tui = Tui::new(app, ctx).await.unwrap_or_else(|e| {

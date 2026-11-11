@@ -14,6 +14,7 @@
 //!   `[s]`         toggle symbols
 //!   `[x]`         toggle avoid-ambiguous
 
+use crate::app::bindings;
 use bogita_core::service::password_gen::{CharsetOptions, PasswordGen};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -164,7 +165,7 @@ impl PasswordGenView {
                 Constraint::Length(1), // charset toggles row 1
                 Constraint::Length(1), // charset toggles row 2
                 Constraint::Length(1), // spacer
-                Constraint::Min(1),    // hint bar
+                Constraint::Min(1),    // spare row
             ])
             .split(inner);
 
@@ -187,22 +188,22 @@ impl PasswordGenView {
             rows[1],
         );
 
-        // Length
+        // Length — the `+/-` chord belongs to the footer row, not here.
         frame.render_widget(
-            Paragraph::new(format!("Length: {}  [+/-]", self.length()))
+            Paragraph::new(format!("Length: {}", self.length()))
                 .style(Style::default().fg(Color::Cyan)),
             rows[3],
         );
 
-        // Charset toggles row 1
+        // Charset toggles row 1 — chords from the registry, state from the view.
         let o = self.charset_options();
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                toggle_span("[u] upper", o.uppercase),
+                toggle_span(&bindings::password_gen_toggle(0), o.uppercase),
                 Span::raw("  "),
-                toggle_span("[l] lower", o.lowercase),
+                toggle_span(&bindings::password_gen_toggle(1), o.lowercase),
                 Span::raw("  "),
-                toggle_span("[d] digits", o.digits),
+                toggle_span(&bindings::password_gen_toggle(2), o.digits),
             ])),
             rows[4],
         );
@@ -210,18 +211,11 @@ impl PasswordGenView {
         // Charset toggles row 2
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                toggle_span("[s] symbols", o.symbols),
+                toggle_span(&bindings::password_gen_toggle(3), o.symbols),
                 Span::raw("  "),
-                toggle_span("[x] no-ambiguous", o.avoid_ambiguous),
+                toggle_span(&bindings::password_gen_toggle(4), o.avoid_ambiguous),
             ])),
             rows[5],
-        );
-
-        // Hint bar
-        frame.render_widget(
-            Paragraph::new("[g] regenerate  [a] accept  [Esc] cancel")
-                .style(Style::default().fg(Color::DarkGray)),
-            rows[7],
         );
     }
 }
@@ -243,12 +237,13 @@ fn entropy_color(bits: f64) -> Color {
     }
 }
 
-fn toggle_span(label: &'static str, enabled: bool) -> Span<'static> {
-    if enabled {
-        Span::styled(label, Style::default().fg(Color::Green))
+fn toggle_span(label: &str, enabled: bool) -> Span<'static> {
+    let style = if enabled {
+        Style::default().fg(Color::Green)
     } else {
-        Span::styled(label, Style::default().fg(Color::DarkGray))
-    }
+        Style::default().fg(Color::DarkGray)
+    };
+    Span::styled(label.to_string(), style)
 }
 
 // region:    --- Tests

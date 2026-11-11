@@ -16,10 +16,10 @@ async fn edit_entry_context_opens_edit_form_for_existing_entry() -> Result<()> {
     )
     .await?;
 
-    assert!(
-        tui.status_hint().contains("Editing name"),
-        "expected the edit form on the name slot, got: {}",
-        tui.status_hint()
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "expected the edit form on the name slot"
     );
     assert!(tui.error_message.is_none());
     Ok(())
@@ -55,10 +55,10 @@ async fn delete_entry_context_opens_confirm_modal_for_existing_entry() -> Result
     )
     .await?;
 
-    assert!(
-        tui.status_hint().contains("[d] delete"),
-        "expected the delete confirmation, got: {}",
-        tui.status_hint()
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmDelete,
+        "expected the delete confirmation"
     );
     assert!(tui.error_message.is_none());
     Ok(())

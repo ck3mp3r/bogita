@@ -235,10 +235,12 @@ async fn add_selects_newly_created_entry() -> Result<()> {
 async fn status_hint_main_idle() -> Result<()> {
     let app = make_app().await?;
     let tui = Tui::new(app, TuiContext::Default).await?;
-    let hint = tui.status_hint();
-    assert!(hint.contains("[/]"), "should mention search key");
-    assert!(hint.contains("[Space]"), "should mention leader key");
-    assert!(hint.contains("[q]"), "should mention quit");
+    assert_eq!(
+        tui.status_hint(),
+        crate::app::bindings::footer(),
+        "the idle bar is the constant footer"
+    );
+    assert_eq!(tui.surface(), crate::app::bindings::Surface::MainEntries);
     Ok(())
 }
 
@@ -247,11 +249,15 @@ async fn status_hint_leader_mode() -> Result<()> {
     let app = make_app().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE); // enter leader mode
-    let hint = tui.status_hint();
-    assert!(hint.contains("[a]"), "leader hint should mention add");
-    assert!(hint.contains("[e]"), "leader hint should mention edit");
-    assert!(hint.contains("[d]"), "leader hint should mention delete");
-    assert!(hint.contains("[Esc]"), "leader hint should mention cancel");
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::MainLeaderEntries,
+        "the leader menu owns the keys"
+    );
+    let menu = crate::app::bindings::hint(crate::app::bindings::MAIN_LEADER_ENTRIES);
+    for chord in ["[a]", "[e]", "[d]", "[Esc]"] {
+        assert!(menu.contains(chord), "the leader menu should list {chord}");
+    }
     Ok(())
 }
 
@@ -262,12 +268,10 @@ async fn status_hint_confirm_delete_view() -> Result<()> {
     // Open delete confirmation
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('d'), KeyModifiers::NONE);
-    let hint = tui.status_hint();
-    assert!(hint.contains("[d]"), "delete hint should mention confirm");
-    assert!(
-        hint.contains("[c]") || hint.contains("Esc"),
-        "delete hint should mention cancel"
-    );
+    assert_eq!(tui.surface(), crate::app::bindings::Surface::ConfirmDelete);
+    let table = crate::app::bindings::hint(crate::app::bindings::CONFIRM_DELETE);
+    assert!(table.contains("[d]"), "the delete modal lists confirm");
+    assert!(table.contains("c/Esc"), "the delete modal lists cancel");
     Ok(())
 }
 
@@ -277,12 +281,15 @@ async fn status_hint_form_name_slot() -> Result<()> {
     let mut tui = Tui::new(app, TuiContext::Default).await?;
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE); // open add form — focus on name slot
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("name"),
-        "form name slot hint should say 'name'"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "the name slot owns the keys"
     );
-    assert!(hint.contains("[Esc]"), "form hint should mention cancel");
+    assert!(
+        crate::app::bindings::hint(crate::app::bindings::FORM_NAME).contains("[Esc]"),
+        "the name slot's inventory lists cancel"
+    );
     Ok(())
 }
 
@@ -324,10 +331,14 @@ async fn error_message_shown_in_status_hint() -> Result<()> {
     let app = make_app().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
     tui.error_message = Some("vault locked".to_string());
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ErrorOverlay,
+        "the error overlay owns the keys"
+    );
     assert!(
-        hint.contains("[Esc") || hint.contains("dismiss"),
-        "status hint should guide user to dismiss, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::ERROR_OVERLAY).contains("dismiss"),
+        "the inventory tells the user how to dismiss"
     );
     Ok(())
 }
@@ -417,10 +428,10 @@ async fn g_key_on_password_slot_opens_gen_view() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // forward to the value slot (now "token")
     tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // open password gen
 
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[g] regenerate"),
-        "status bar should show gen view hints, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::PasswordGen,
+        "Alt-g on a token slot should open the generator"
     );
     Ok(())
 }
@@ -439,10 +450,10 @@ async fn g_key_on_plain_value_slot_does_not_open_gen_view() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → plain value slot
     tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // no gen on a plain slot
 
-    let hint = tui.status_hint();
-    assert!(
-        !hint.contains("[g] regenerate"),
-        "[g] on a plain value slot must NOT open gen view, got: {hint}"
+    assert_ne!(
+        tui.surface(),
+        crate::app::bindings::Surface::PasswordGen,
+        "[g] on a plain value slot must NOT open gen view"
     );
     Ok(())
 }
@@ -464,10 +475,10 @@ async fn esc_in_gen_view_returns_to_form() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT); // open gen view
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE); // cancel gen view
 
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[Esc] cancel") && !hint.contains("[g] regenerate"),
-        "should be back in form, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormToken,
+        "Esc in the generator returns to the token slot"
     );
     Ok(())
 }
@@ -494,10 +505,10 @@ async fn accept_in_gen_view_injects_password_into_form() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE); // accept
 
     // Back in form — confirm should produce a non-empty value
-    let hint = tui.status_hint();
-    assert!(
-        !hint.contains("[g] regenerate"),
-        "should be back in form after accept, got: {hint}"
+    assert_ne!(
+        tui.surface(),
+        crate::app::bindings::Surface::PasswordGen,
+        "should be back in form after accept"
     );
     Ok(())
 }

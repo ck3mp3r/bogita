@@ -37,7 +37,10 @@ mod events;
 mod field;
 mod form;
 mod render;
+mod row;
 mod state;
+mod type_picker;
+mod widgets;
 
 pub use field::{FormAction, FormFieldType, FormMode, SlotKind, ValidationIssue};
 pub use form::EntryForm;
@@ -52,6 +55,9 @@ mod entry_form_boolean_row_test;
 #[path = "../../../test/views/entry_form/cursor.rs"]
 mod entry_form_cursor_test;
 #[cfg(test)]
+#[path = "../../../test/views/entry_form/cut_field.rs"]
+mod entry_form_cut_field_test;
+#[cfg(test)]
 #[path = "../../../test/views/entry_form/editing.rs"]
 mod entry_form_editing_test;
 #[cfg(test)]
@@ -61,11 +67,17 @@ mod entry_form_layout_test;
 #[path = "../../../test/views/entry_form/mapping_and_labels.rs"]
 mod entry_form_mapping_and_labels_test;
 #[cfg(test)]
+#[path = "../../../test/views/entry_form/modal.rs"]
+mod entry_form_modal_test;
+#[cfg(test)]
 #[path = "../../../test/views/entry_form/notes_scroll_validation.rs"]
 mod entry_form_notes_scroll_validation_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/reveal_and_types.rs"]
 mod entry_form_reveal_and_types_test;
+#[cfg(test)]
+#[path = "../../../test/views/entry_form/row.rs"]
+mod entry_form_row_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/save_chord.rs"]
 mod entry_form_save_chord_test;
@@ -73,8 +85,14 @@ mod entry_form_save_chord_test;
 #[path = "../../../test/views/entry_form/ssh_key_confirm.rs"]
 mod entry_form_ssh_key_confirm_test;
 #[cfg(test)]
+#[path = "../../../test/views/entry_form/type_fidelity.rs"]
+mod entry_form_type_fidelity_test;
+#[cfg(test)]
 #[path = "../../../test/views/entry_form/validation.rs"]
 mod entry_form_validation_test;
+#[cfg(test)]
+#[path = "../../../test/views/entry_form/widgets.rs"]
+mod entry_form_widgets_test;
 #[cfg(test)]
 #[path = "../../../test/views/entry_form/support.rs"]
 mod support;

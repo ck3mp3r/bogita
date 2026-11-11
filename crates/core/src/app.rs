@@ -332,6 +332,24 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> App<K, F, I> {
         })
     }
 
+    /// Build the app in its locked state, without asking for a passphrase.
+    ///
+    /// The registry is already open, so a caller can render a locked shell and
+    /// unlock in place. Nothing is staged: the identity stays out of memory and
+    /// out of the keychain until [`Self::unlock`] runs, which is the same
+    /// staging step the CLI's `complete_unlock` performs.
+    pub fn pending(parts: InitParts<K, F, I>) -> Self {
+        Self {
+            config: parts.config,
+            identity: None,
+            registry: parts.registry,
+            session: parts.session,
+            is_locked: true,
+            lock_timeout: parts.lock_timeout,
+            identity_store: parts.identity_store,
+        }
+    }
+
     /// Lock the app: remove identity from keychain and clear in-memory identity.
     pub fn lock(&mut self) -> Result<()> {
         self.session.lock()?;
@@ -360,12 +378,15 @@ impl App<KeychainAdapter, SqliteStorageFactory, EncryptedIdentityFile> {
     /// with mock components.
     pub async fn init() -> InitResult<KeychainAdapter, SqliteStorageFactory, EncryptedIdentityFile>
     {
-        Self::init_with(
-            KeychainAdapter::new(),
-            SqliteStorageFactory,
-            EncryptedIdentityFile,
-        )
-        .await
+        let keychain = match crate::storage::keychain::platform_adapter() {
+            Ok(adapter) => adapter,
+            Err(e) => {
+                return InitResult::Failed {
+                    message: format!("keychain unavailable: {e}"),
+                }
+            }
+        };
+        Self::init_with(keychain, SqliteStorageFactory, EncryptedIdentityFile).await
     }
 }
 

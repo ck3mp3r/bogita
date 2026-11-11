@@ -81,6 +81,53 @@ async fn add_entry_context_renders_named_vault() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn modal_rect_is_capped_and_inside_the_body() -> Result<()> {
+    use crate::app::form_modal_rect;
+    use ratatui::layout::Rect;
+
+    // -- Exec
+    let body = Rect::new(0, 3, 200, 50);
+    let rect = form_modal_rect(body, 3);
+
+    // -- Check
+    assert!(
+        rect.width <= body.width * 6 / 10 + 1,
+        "the entry form modal must stay at or under 60% of the body, got: {rect:?}"
+    );
+    assert!(rect.width >= 40, "the modal must stay readable: {rect:?}");
+    assert!(
+        rect.x >= body.x && rect.x + rect.width <= body.x + body.width,
+        "the modal must stay inside the frame horizontally: {rect:?}"
+    );
+    assert!(
+        rect.y >= body.y && rect.y + rect.height <= body.y + body.height,
+        "the modal must stay inside the frame vertically: {rect:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn modal_height_follows_field_count() -> Result<()> {
+    use crate::app::form_modal_rect;
+    use ratatui::layout::Rect;
+
+    // -- Exec
+    let body = Rect::new(0, 0, 160, 60);
+    let one = form_modal_rect(body, 1);
+    let four = form_modal_rect(body, 4);
+
+    // -- Check
+    assert_eq!(one.height, 7 + 3, "one field row hugs its content: {one:?}");
+    assert_eq!(
+        four.height,
+        7 + 3 * 4,
+        "four field rows grow the modal: {four:?}"
+    );
+    assert!(four.height > one.height);
+    Ok(())
+}
+
 #[tokio::test]
 async fn vault_form_checkbox_hint_advertises_alt_t() -> Result<()> {
     // -- Setup & Fixtures
@@ -93,10 +140,15 @@ async fn vault_form_checkbox_hint_advertises_alt_t() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE);
 
     // -- Check
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::VaultFormCheckbox,
+        "the default checkbox cell owns the keys"
+    );
     assert!(
-        hint.contains("[Alt-t] toggle default"),
-        "the checkbox cell must advertise Alt-t, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::VAULT_FORM_CHECKBOX)
+            .contains("[Alt-t] toggle default"),
+        "the checkbox inventory advertises Alt-t"
     );
     Ok(())
 }

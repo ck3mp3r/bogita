@@ -5,9 +5,27 @@ use crate::context::TuiContext;
 use bogita_core::domain::SshKeyMaterial;
 use bogita_core::ports::{EncryptedIdentityFile, SqliteStorageFactory};
 use bogita_core::test_support::MockKeychain;
+use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::Terminal;
 
 use super::support::make_app;
+
+/// Draw the whole app and flatten the screen, so a test can assert what the
+/// user actually sees (the footer is constant now; feedback lives in the form).
+fn rendered(
+    tui: &mut Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>,
+) -> Result<String> {
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    terminal.draw(|frame| tui.render(frame))?;
+    Ok(terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect())
+}
 
 /// Open an add form with one SshKey row focused on its value slot.
 async fn ssh_value_form(tui: &mut Tui<MockKeychain, SqliteStorageFactory, EncryptedIdentityFile>) {
@@ -49,14 +67,15 @@ async fn invalid_pem_block_save_with_reason() -> Result<()> {
         tui.main_view.visible_entries().is_empty(),
         "an unparsable key must never reach storage"
     );
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("Editing token"),
-        "the form stays open on a refused save, got: {hint}"
+    let screen = rendered(&mut tui)?;
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormToken,
+        "the form stays open on a refused save"
     );
     assert!(
-        hint.contains("Field 1") && hint.contains("not a valid OpenSSH private key"),
-        "the summary must state the reason and name the field, got: {hint}"
+        screen.contains("Field 1") && screen.contains("not a valid OpenSSH private key"),
+        "the form row must state the reason and name the field"
     );
     Ok(())
 }
@@ -99,10 +118,10 @@ async fn alt_s_is_inert_on_an_invalid_pem() -> Result<()> {
 
     // -- Check
     assert!(tui.main_view.visible_entries().is_empty());
-    let hint = tui.status_hint();
+    let screen = rendered(&mut tui)?;
     assert!(
-        hint.contains("not a valid OpenSSH private key"),
-        "Alt-s must leave the reason visible, got: {hint}"
+        screen.contains("not a valid OpenSSH private key"),
+        "Alt-s must leave the reason visible in the form"
     );
     Ok(())
 }

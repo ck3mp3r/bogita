@@ -6,10 +6,10 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::support::*;
 
-// ── clipboard copy ([c] in Detail column) ────────────────────────────────────
+// ── clipboard copy ([y] in Detail column) ────────────────────────────────────
 
 #[tokio::test]
-async fn c_key_in_detail_sets_pending_copy() -> Result<()> {
+async fn y_key_in_detail_sets_pending_copy() -> Result<()> {
     use ratatui::crossterm::event::KeyCode;
 
     let app = make_app_with_entry().await?;
@@ -17,28 +17,28 @@ async fn c_key_in_detail_sets_pending_copy() -> Result<()> {
 
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // Entries → Detail (queues LoadDetail)
     tui.flush_pending().await?; // fetch + decrypt detail_entry
-    tui.handle_key_with_modifiers(KeyCode::Char('c'), KeyModifiers::NONE);
+    tui.handle_key_with_modifiers(KeyCode::Char('y'), KeyModifiers::NONE);
 
     assert!(
         tui.pending_copy.is_some(),
-        "[c] in Detail column should set a pending copy action"
+        "[y] in Detail column should set a pending copy action"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn c_key_outside_detail_does_not_set_pending_copy() -> Result<()> {
+async fn y_key_outside_detail_does_not_set_pending_copy() -> Result<()> {
     use ratatui::crossterm::event::KeyCode;
 
     let app = make_app_with_entry().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
 
-    // Default focus is Entries — [c] should be a no-op there.
-    tui.handle_key_with_modifiers(KeyCode::Char('c'), KeyModifiers::NONE);
+    // Default focus is Entries — [y] should be a no-op there.
+    tui.handle_key_with_modifiers(KeyCode::Char('y'), KeyModifiers::NONE);
 
     assert!(
         tui.pending_copy.is_none(),
-        "[c] outside Detail column should not set pending copy"
+        "[y] outside Detail column should not set pending copy"
     );
     Ok(())
 }
@@ -52,7 +52,7 @@ async fn flush_copy_clears_pending_copy() -> Result<()> {
 
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → Detail (queues LoadDetail)
     tui.flush_pending().await?; // fetch detail_entry
-    tui.handle_key_with_modifiers(KeyCode::Char('c'), KeyModifiers::NONE); // queue copy
+    tui.handle_key_with_modifiers(KeyCode::Char('y'), KeyModifiers::NONE); // queue copy
     assert!(tui.pending_copy.is_some());
 
     tui.flush_pending().await?;
@@ -72,10 +72,14 @@ async fn status_hint_detail_focused_mentions_copy() -> Result<()> {
     // Tab to Detail column.
     tui.handle_key_with_modifiers(ratatui::crossterm::event::KeyCode::Tab, KeyModifiers::NONE);
 
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::MainDetail,
+        "the detail pane owns the keys"
+    );
     assert!(
-        hint.contains("[c]"),
-        "status bar should mention [c] copy when Detail is focused, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::MAIN_DETAIL).contains("[y] copy"),
+        "the detail inventory lists copy"
     );
     Ok(())
 }
@@ -131,8 +135,11 @@ async fn form_renders_as_centered_overlay() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
 
     // Verify we're in Form view
-    let hint = tui.status_hint();
-    assert!(hint.contains("name"), "should be in form view, got: {hint}");
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "should be in form view"
+    );
 
     // Verify main view still has vaults visible (render_cols_1_2 is still called)
     assert!(
@@ -155,8 +162,11 @@ async fn main_view_visible_behind_form() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('e'), KeyModifiers::NONE);
 
     // Verify we're in form view
-    let hint = tui.status_hint();
-    assert!(hint.contains("name"), "should be in form view, got: {hint}");
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "should be in form view"
+    );
 
     // Verify entries are still visible in main_view (render_cols_1_2 still called)
     assert_eq!(
@@ -180,21 +190,23 @@ async fn esc_unchanged_form_cancels_without_prompt() -> Result<()> {
     let app = make_app_with_entry().await?;
     let mut tui = Tui::new(app, TuiContext::Default).await?;
 
-    // Open edit form
+    // Open the edit form and press Esc immediately: nothing changed, so nothing
+    // is asked and nothing is written.
     tui.handle_key_with_modifiers(KeyCode::Char(' '), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('e'), KeyModifiers::NONE);
-    // Press Esc immediately — no changes, should go to ConfirmSave (edit mode)
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
-    // Should be in ConfirmSave (edit mode always goes to ConfirmSave on Cancel)
-    // But we want to test the dirty check: unchanged form → Cancel → ConfirmSave
-    // Actually, edit mode Cancel always goes to ConfirmSave regardless of dirty.
-    // The dirty check is in the form's Esc handler, which returns Cancel (not dirty)
-    // and then app.rs wraps it in ConfirmSave for edit mode.
-    // So we just verify we're not in Form anymore.
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[s/Enter] save"),
-        "unchanged edit form Esc should go to ConfirmSave, got: {hint}"
+
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::MainEntries,
+        "a clean edit form closes without the save modal"
+    );
+    assert_eq!(
+        tui.status_message
+            .as_ref()
+            .map(|(message, _)| message.as_str())
+            .unwrap_or_default(),
+        "No changes to save"
     );
     Ok(())
 }
@@ -214,9 +226,10 @@ async fn esc_dirty_edit_form_shows_save_and_discard_modal() -> Result<()> {
     // Esc on a dirty edit form opens the save/discard modal
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
     let hint = tui.status_hint();
-    assert!(
-        hint.contains("[s/Enter] save") && hint.contains("[d] discard"),
-        "dirty edit form Esc should offer save and discard, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmSave,
+        "dirty edit form Esc should offer save and discard, footer was: {hint}"
     );
     Ok(())
 }
@@ -238,9 +251,10 @@ async fn confirm_discard_closes_form() -> Result<()> {
     // Press d to confirm discard
     tui.handle_key_with_modifiers(KeyCode::Char('d'), KeyModifiers::NONE);
     let hint = tui.status_hint();
-    assert!(
-        !hint.contains("discard"),
-        "after confirming discard, should be back to main view, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::MainEntries,
+        "after confirming discard, should be back to main view, footer was: {hint}"
     );
     Ok(())
 }
@@ -262,9 +276,10 @@ async fn cancel_discard_returns_to_form() -> Result<()> {
     // Press b to cancel discard
     tui.handle_key_with_modifiers(KeyCode::Char('b'), KeyModifiers::NONE);
     let hint = tui.status_hint();
-    assert!(
-        hint.contains("Editing name"),
-        "after cancelling discard, should be back in form, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "after cancelling discard, should be back in form, footer was: {hint}"
     );
     Ok(())
 }
@@ -286,9 +301,10 @@ async fn esc_in_discard_modal_returns_to_form() -> Result<()> {
     // Press Esc again to go back to the form
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
     let hint = tui.status_hint();
-    assert!(
-        hint.contains("Editing name"),
-        "Esc in discard modal should return to form, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "Esc in discard modal should return to form, footer was: {hint}"
     );
     Ok(())
 }
@@ -372,13 +388,14 @@ async fn lock_screen_status_hint_unlock() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL);
 
     let hint = tui.status_hint();
-    assert!(
-        hint.contains("passphrase"),
-        "lock screen hint should mention passphrase, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::Locked,
+        "the lock screen owns the keys, footer was: {hint}"
     );
     assert!(
-        hint.contains("[Esc]"),
-        "lock screen hint should mention Esc, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::LOCKED).contains("[Esc]"),
+        "the lock inventory lists Esc"
     );
     Ok(())
 }
@@ -410,12 +427,11 @@ async fn lock_screen_typing_accumulates_chars() -> Result<()> {
         tui.handle_key_with_modifiers(KeyCode::Char(c), KeyModifiers::NONE);
     }
 
-    // Verify the passphrase input accumulated chars by checking status hint
-    // (we can't directly access the TextInputState, but we can verify behavior)
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("passphrase"),
-        "should still be on lock screen after typing, got: {hint}"
+    // Typing must not leave the lock screen.
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::Locked,
+        "should still be on lock screen after typing"
     );
     Ok(())
 }

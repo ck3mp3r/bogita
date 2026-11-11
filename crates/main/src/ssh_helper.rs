@@ -1,14 +1,14 @@
 use bogita_cli::handlers::ssh_sign::{self, HelperAction, HelperError};
 use bogita_core::app::{DefaultApp, InitResult};
 use bogita_core::session::Session;
-use bogita_core::storage::keychain::KeychainAdapter;
+use bogita_core::storage::keychain::platform_adapter;
 
 /// Answer one `gpg.ssh.program` invocation.
 ///
 /// The identity gate runs first, before the database is opened: a locked vault
 /// refuses every invocation with the contract message and exit code 1.
 pub(crate) async fn run_ssh_sign_helper(args: Vec<String>) {
-    let session = Session::new(KeychainAdapter::new());
+    let session = keychain_session();
     let (identity, action) = match ssh_sign::prepare(&args, &session) {
         Ok(prepared) => prepared,
         Err(error) => exit_helper(&error),
@@ -30,7 +30,7 @@ pub(crate) async fn run_ssh_sign_helper(args: Vec<String>) {
 
 /// Print the public key line of the only agent-servable key.
 pub(crate) async fn run_ssh_default_key() {
-    let session = Session::new(KeychainAdapter::new());
+    let session = keychain_session();
     let identity = match ssh_sign::gate(&session) {
         Ok(identity) => identity,
         Err(error) => exit_helper(&error),
@@ -40,6 +40,17 @@ pub(crate) async fn run_ssh_default_key() {
     match ssh_sign::handle_default_key(&identity, app.registry).await {
         Ok(line) => println!("{line}"),
         Err(error) => exit_helper(&error),
+    }
+}
+
+/// Session over the real keychain, built through the composition seam.
+///
+/// The helpers never prompt: an unusable platform keychain is reported as the
+/// locked-vault contract message with exit code 1.
+fn keychain_session() -> Session<bogita_core::storage::keychain::KeychainAdapter> {
+    match platform_adapter() {
+        Ok(adapter) => Session::new(adapter),
+        Err(_) => exit_helper(&HelperError::Locked),
     }
 }
 

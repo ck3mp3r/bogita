@@ -34,8 +34,13 @@ pub struct MainView {
     pub(super) searching: bool,
     /// Whether the Space leader key has been pressed and we're awaiting the action key.
     pub(super) leader_mode: bool,
+    /// Whether a `g` is waiting for its second `g`. One key of memory, cleared by
+    /// any other key.
+    pub(super) pending_g: bool,
     /// Whether the vault picker dropdown is open.
     pub(super) vault_picker_open: bool,
+    /// Rows the entry list last painted — half of this is one Ctrl-d step.
+    pub(super) list_view_rows: usize,
 }
 
 impl MainView {
@@ -59,7 +64,9 @@ impl MainView {
             search_query: String::new(),
             searching: false,
             leader_mode: false,
+            pending_g: false,
             vault_picker_open: false,
+            list_view_rows: 10,
         }
     }
 

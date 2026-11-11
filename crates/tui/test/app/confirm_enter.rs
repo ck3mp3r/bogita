@@ -20,10 +20,10 @@ async fn edit_enter_on_save_modal_saves() -> Result<()> {
 
     // -- Exec: Enter opens the save modal, a second Enter completes the save
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[s/Enter] save"),
-        "Enter on the edit form should open the save modal, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmSave,
+        "Enter on the edit form should open the save modal"
     );
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
     tui.flush_pending().await?;
@@ -65,10 +65,10 @@ async fn enter_on_discard_modal_returns_to_form() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
 
     // -- Check
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("Editing name") && !hint.contains("[d] discard"),
-        "Enter on the discard modal must return to the form with the edits intact, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "Enter on the discard modal must return to the form with the edits intact"
     );
     Ok(())
 }
@@ -82,10 +82,10 @@ async fn enter_on_delete_modal_keeps_the_modal() -> Result<()> {
 
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE);
 
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[d] delete"),
-        "Enter must not confirm a destructive delete, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmDelete,
+        "Enter must not confirm a destructive delete"
     );
     Ok(())
 }

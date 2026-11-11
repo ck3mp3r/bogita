@@ -1,18 +1,22 @@
 //! Rendering for the entry form: frame, vault/name rows, field rows, popups.
+//!
+//! Orchestration only — the field rows are painted by [`RowWidget`] cells.
 
-use rat_popup::Placement;
-use rat_widget::choice::Choice;
 use rat_widget::text::HasScreenCursor;
 use rat_widget::text_input::TextInput;
-use rat_widget::textarea::TextArea;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use super::field::{FormFieldType, FormMode, ValidationIssue};
+use super::field::{FormMode, ValidationIssue};
+use super::row::{
+    form_rows, key_has_error, render_status_row, render_type_popups, value_has_error, RenderCtx,
+    RowWidget,
+};
 use super::EntryForm;
+use crate::app::bindings;
 
 impl EntryForm {
     // ── rendering ─────────────────────────────────────────────────────────────
@@ -35,25 +39,43 @@ impl EntryForm {
         }
         for rel_i in 0..field_rows {
             let abs_i = self.scroll_offset + rel_i;
-            if let Some(row) = rows.get(rel_i + 2) {
-                self.render_field_row(frame, *row, abs_i, inner);
-            }
+            let Some(row) = rows.get(rel_i + 2) else {
+                continue;
+            };
+            let Some(field) = self.fields.get_mut(abs_i) else {
+                continue;
+            };
+            let mut ctx = RenderCtx {
+                frame,
+                inner,
+                badge: field.field_type.label(),
+                revealed: self.revealed_secret_fields.contains(&abs_i),
+                key_error: key_has_error(&self.validation_errors, abs_i),
+                value_error: value_has_error(&self.validation_errors, abs_i),
+            };
+            RowWidget::new(*row).render(&mut ctx, field);
         }
 
-        self.render_type_popups(frame, inner);
+        render_type_popups(frame, &mut self.fields, inner);
 
+        // The last row carries the form's own feedback — never keys.
         if let Some(row) = rows.last() {
-            self.render_hint_bar(frame, *row, end);
+            let summary = if self.has_validation_errors() {
+                Some(self.validation_error_summary())
+            } else {
+                None
+            };
+            render_status_row(frame, *row, summary);
         }
     }
 
-    /// Draw the double-bordered overlay and return its inner area.
+    /// Draw the modal frame and return its inner area.
+    ///
+    /// The title carries identity — the entry being edited, or the vault a new
+    /// entry goes into — because the footer carries keys and the modal carries
+    /// the name.
     fn render_outer(&self, frame: &mut Frame, area: Rect) -> Rect {
-        let dirty_mark = if self.is_dirty() { " *" } else { "" };
-        let title = match self.mode {
-            FormMode::Add => format!(" New Entry{dirty_mark} "),
-            FormMode::Edit => format!(" Edit Entry{dirty_mark} "),
-        };
+        let title = self.modal_title(area.width);
 
         // Clear the area first to prevent background content from showing through.
         frame.render_widget(Clear, area);
@@ -65,6 +87,26 @@ impl EntryForm {
         let inner = outer.inner(area);
         frame.render_widget(outer, area);
         inner
+    }
+
+    /// The modal title: `\` Edit · name *\`` — identity first, dirty mark last.
+    ///
+    /// Long identities are truncated to 40% of the modal width with an ellipsis
+    /// so the frame never stretches because of a name.
+    fn modal_title(&self, width: u16) -> String {
+        let dirty_mark = if self.is_dirty() { " *" } else { "" };
+        let identity = match self.mode {
+            FormMode::Add if !self.vault_name.is_empty() => {
+                format!("New · {}", self.vault_name)
+            }
+            FormMode::Add => "New Entry".to_string(),
+            FormMode::Edit if !self.name_state.text().is_empty() => {
+                format!("Edit · {}", self.name_state.text())
+            }
+            FormMode::Edit => "Edit Entry".to_string(),
+        };
+        let cap = (usize::from(width) * 2 / 5).max(8);
+        format!(" {}{dirty_mark} ", truncate(&identity, cap))
     }
 
     /// Clamp `scroll_offset` to the visible range and return the index one past
@@ -88,7 +130,7 @@ impl EntryForm {
         let vault_hint = if self.vault_name.is_empty() {
             String::new()
         } else {
-            " [v] change vault ".to_string()
+            format!(" {} ", bindings::form_vault_hint())
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -110,6 +152,8 @@ impl EntryForm {
         let name_has_error = self.validation_errors.contains(&ValidationIssue::EmptyName);
         let name_border_color = if name_has_error {
             Color::Red
+        } else if name_focused {
+            Color::Yellow
         } else {
             Color::default()
         };
@@ -128,11 +172,7 @@ impl EntryForm {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_type(if name_focused {
-                        BorderType::Double
-                    } else {
-                        BorderType::Plain
-                    })
+                    .border_type(BorderType::Plain)
                     .border_style(Style::default().fg(name_border_color))
                     .title(name_title),
             );
@@ -143,327 +183,14 @@ impl EntryForm {
             }
         }
     }
-
-    /// A field row — [key 35%] [type 15%] [value 50%].
-    fn render_field_row(&mut self, frame: &mut Frame, row: Rect, abs_i: usize, inner: Rect) {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(35),
-                Constraint::Percentage(15),
-                Constraint::Percentage(50),
-            ])
-            .split(row);
-
-        self.render_key_cell(frame, cols[0], abs_i);
-        self.render_type_cell(frame, cols[1], abs_i, inner);
-        self.render_value_cell(frame, cols[2], abs_i);
-    }
-
-    /// `true` when this row's value carries a value-format error.
-    fn value_has_error(&self, abs_i: usize) -> bool {
-        self.validation_errors
-            .contains(&ValidationIssue::InvalidSshKey(abs_i))
-            || self
-                .validation_errors
-                .contains(&ValidationIssue::InvalidTotp(abs_i))
-    }
-
-    fn render_key_cell(&mut self, frame: &mut Frame, area: Rect, abs_i: usize) {
-        let key_has_error = self
-            .validation_errors
-            .contains(&ValidationIssue::EmptyKey(abs_i))
-            || self
-                .validation_errors
-                .contains(&ValidationIssue::DuplicateKey(abs_i));
-        let Some(ff) = self.fields.get_mut(abs_i) else {
-            return;
-        };
-        let key_f = ff.key_state.focus.get();
-        let key_border_color = if key_has_error {
-            Color::Red
-        } else {
-            Color::default()
-        };
-        let key_title = if key_has_error { " Key ⚠ " } else { " Key " };
-        let key_widget = TextInput::new()
-            .style(Style::default())
-            .focus_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(if key_f {
-                        BorderType::Double
-                    } else {
-                        BorderType::Plain
-                    })
-                    .border_style(Style::default().fg(key_border_color))
-                    .title(key_title),
-            );
-        frame.render_stateful_widget(key_widget, area, &mut ff.key_state);
-        if key_f {
-            if let Some((cx, cy)) = ff.key_state.screen_cursor() {
-                frame.set_cursor_position((cx, cy));
-            }
-        }
-    }
-
-    /// Value cell — the badge in the title shows the field type label, and an
-    /// invalid value carries the same ⚠ marker as an invalid key cell.
-    fn render_value_cell(&mut self, frame: &mut Frame, area: Rect, abs_i: usize) {
-        let value_has_error = self.value_has_error(abs_i);
-        let (is_notes, is_obscured, val_f, badge, is_revealed) = {
-            let Some(ff) = self.fields.get_mut(abs_i) else {
-                return;
-            };
-            (
-                ff.field_type == FormFieldType::Notes,
-                ff.field_type.is_obscured(),
-                if ff.field_type == FormFieldType::Notes {
-                    ff.textarea_state.as_ref().is_some_and(|s| s.focus.get())
-                } else {
-                    ff.value_state.focus.get()
-                },
-                ff.field_type.label(),
-                self.revealed_secret_fields.contains(&abs_i),
-            )
-        };
-        let suffix = match (is_revealed, value_has_error) {
-            (true, true) => " [revealed] ⚠ ",
-            (true, false) => " [revealed] ",
-            (false, true) => " ⚠ ",
-            (false, false) => " ",
-        };
-        let value_title = format!(" Value {badge}{suffix}");
-
-        if is_notes {
-            self.render_notes_value(frame, area, abs_i, &value_title, val_f);
-        } else if is_obscured {
-            self.render_obscured_value(frame, area, abs_i, &value_title, val_f, is_revealed);
-        } else {
-            self.render_plain_value(frame, area, abs_i, &value_title, val_f);
-        }
-    }
-
-    /// Notes value cell — a TextArea, falling back to plain text when the
-    /// TextAreaState is missing.
-    fn render_notes_value(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        abs_i: usize,
-        title: &str,
-        val_f: bool,
-    ) {
-        let error = self.value_has_error(abs_i);
-        let Some(ff) = self.fields.get_mut(abs_i) else {
-            return;
-        };
-        if let Some(state) = ff.textarea_state.as_mut() {
-            let textarea = TextArea::new()
-                .style(if val_f {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                })
-                .block(value_block(title, val_f, error));
-            frame.render_stateful_widget(textarea, area, state);
-            if val_f {
-                if let Some((cx, cy)) = state.screen_cursor() {
-                    frame.set_cursor_position((cx, cy));
-                }
-            }
-        } else {
-            let val_widget = plain_value_input(title, val_f, error);
-            frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
-            if val_f {
-                if let Some((cx, cy)) = ff.value_state.screen_cursor() {
-                    frame.set_cursor_position((cx, cy));
-                }
-            }
-        }
-    }
-
-    /// Obscured value cell — masked unless the field is revealed.
-    fn render_obscured_value(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        abs_i: usize,
-        title: &str,
-        val_f: bool,
-        is_revealed: bool,
-    ) {
-        let error = self.value_has_error(abs_i);
-        let Some(ff) = self.fields.get_mut(abs_i) else {
-            return;
-        };
-        let mut val_widget = plain_value_input(title, val_f, error);
-        if !is_revealed {
-            val_widget = val_widget.passwd();
-        }
-        frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
-        if val_f {
-            if let Some((cx, cy)) = ff.value_state.screen_cursor() {
-                frame.set_cursor_position((cx, cy));
-            }
-        }
-    }
-
-    /// Plain value cell.
-    fn render_plain_value(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        abs_i: usize,
-        title: &str,
-        val_f: bool,
-    ) {
-        let error = self.value_has_error(abs_i);
-        let Some(ff) = self.fields.get_mut(abs_i) else {
-            return;
-        };
-        let val_widget = plain_value_input(title, val_f, error);
-        frame.render_stateful_widget(val_widget, area, &mut ff.value_state);
-        if val_f {
-            if let Some((cx, cy)) = ff.value_state.screen_cursor() {
-                frame.set_cursor_position((cx, cy));
-            }
-        }
-    }
-
-    /// Type cell — uses rat-widget Choice for the selector.
-    fn render_type_cell(&mut self, frame: &mut Frame, area: Rect, abs_i: usize, inner: Rect) {
-        let Some(ff) = self.fields.get_mut(abs_i) else {
-            return;
-        };
-        let type_f = ff.type_state.focus.get();
-        let (type_widget, _) = type_selector()
-            .style(Style::default())
-            .focus_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(if type_f {
-                        BorderType::Double
-                    } else {
-                        BorderType::Plain
-                    })
-                    .border_style(if type_f {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    })
-                    .title(" Type "),
-            )
-            .popup_block(Block::default().borders(Borders::ALL))
-            .popup_placement(Placement::AboveOrBelow)
-            .popup_boundary(inner)
-            .into_widgets();
-        frame.render_stateful_widget(type_widget, area, &mut ff.type_state);
-    }
-
-    /// Render popups for any fields with an active popup. Popups must be
-    /// rendered AFTER all other widgets so they overlay.
-    fn render_type_popups(&mut self, frame: &mut Frame, inner: Rect) {
-        for ff in self.fields.iter_mut() {
-            if ff.type_state.is_popup_active() {
-                let (_, popup) = type_selector()
-                    .popup_block(Block::default().borders(Borders::ALL))
-                    .popup_placement(Placement::AboveOrBelow)
-                    .popup_boundary(inner)
-                    .into_widgets();
-                frame.render_stateful_widget(popup, ff.type_state.area, &mut ff.type_state);
-            }
-        }
-    }
-
-    /// Hint bar — field management keys plus scroll indicators.
-    fn render_hint_bar(&self, frame: &mut Frame, row: Rect, end: usize) {
-        let mut hint_text = " [Alt-n] add field  [Alt-d] remove field ".to_string();
-        if self.scroll_offset > 0 {
-            hint_text.push_str(" ↑ ");
-        }
-        if end < self.fields.len() {
-            hint_text.push_str(" ↓ ");
-        }
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
-                hint_text,
-                Style::default().fg(Color::DarkGray),
-            )])),
-            row,
-        );
-    }
 }
 
-/// Vertical layout: vault row, name row, one row per visible field, hint row.
-fn form_rows(inner: Rect, field_rows: usize) -> Vec<Rect> {
-    let row_count = 1 + 1 + field_rows + 1;
-    let constraints: Vec<Constraint> = (0..row_count)
-        .map(|i| {
-            if i == row_count - 1 {
-                Constraint::Length(1)
-            } else if i == 0 {
-                // Vault name row — 1 line
-                Constraint::Length(1)
-            } else {
-                Constraint::Length(3)
-            }
-        })
-        .collect();
-
-    Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(inner)
-        .to_vec()
-}
-
-/// The bordered block shared by every value cell.
-fn value_block<'a>(title: &'a str, focused: bool, error: bool) -> Block<'a> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(if focused {
-            BorderType::Double
-        } else {
-            BorderType::Plain
-        })
-        .border_style(Style::default().fg(if error { Color::Red } else { Color::default() }))
-        .title(title)
-}
-
-/// A plain (non-masked) value input.
-fn plain_value_input<'a>(title: &'a str, focused: bool, error: bool) -> TextInput<'a> {
-    TextInput::new()
-        .style(Style::default())
-        .focus_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .block(value_block(title, focused, error))
-}
-
-/// The field-type selector, shared by the inline cell and the open popup.
-///
-/// The items derive from [`FormFieldType::TABLE`], so the picker order and the
-/// labels cannot drift from the type list.
-fn type_selector() -> Choice<'static, usize> {
-    FormFieldType::TABLE
-        .iter()
-        .enumerate()
-        .fold(Choice::new(), |choice, (index, (_, label, _))| {
-            choice.item(index, *label)
-        })
+/// Truncate `text` to `cap` characters, marking the cut with an ellipsis.
+fn truncate(text: &str, cap: usize) -> String {
+    if text.chars().count() <= cap {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(cap.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }

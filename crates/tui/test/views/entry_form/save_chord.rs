@@ -74,8 +74,8 @@ fn alt_s_from_notes_slot_confirms() {
     }
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
-    for _ in 0..5 {
-        form.handle_key(KeyCode::Char('j')); // → 5 = notes
+    for _ in 0..6 {
+        form.handle_key(KeyCode::Char('j')); // → 6 = notes
     }
     form.handle_key(KeyCode::Enter); // apply the selection
     form.handle_key(KeyCode::Tab); // → value slot (textarea)

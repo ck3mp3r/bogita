@@ -55,18 +55,39 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         }
 
         // `?` toggles the keybindings overlay from every surface. While it is
-        // open it owns the keyboard: `j`/`k` scroll, `?`/Esc/`q` close.
+        // open it owns the keyboard: the same navigation grammar as any other
+        // scrollable surface, plus `?`/Esc/`q` to close.
         if key == KeyCode::Char('?') && inserts_text(modifiers) {
             self.help = self.help.map_or(Some(0), |_| None);
+            self.help_pending_g = false;
             return;
         }
         if let Some(scroll) = self.help {
-            self.help = match key {
+            let shift = modifiers.contains(KeyModifiers::SHIFT);
+            let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+            // A terminal reports the capital chord as the uppercase glyph or as
+            // the base code point plus SHIFT. Both mean the end, and both come
+            // before the pending-`g` arm so the capital chord never arms a pair.
+            let armed = self.help_pending_g;
+            let half = (self.help_viewport / 2).max(1);
+            let next = match key {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => None,
+                KeyCode::Char('G') => Some(self.help_max_scroll),
+                KeyCode::Char('g') if shift => Some(self.help_max_scroll),
+                KeyCode::Char('g') if armed => Some(0),
+                KeyCode::Char('g') => Some(scroll),
+                KeyCode::Char('d') if ctrl => {
+                    Some(scroll.saturating_add(half).min(self.help_max_scroll))
+                }
+                KeyCode::Char('u') if ctrl => Some(scroll.saturating_sub(half)),
                 KeyCode::Char('j') | KeyCode::Down => Some(scroll.saturating_add(1)),
                 KeyCode::Char('k') | KeyCode::Up => Some(scroll.saturating_sub(1)),
                 _ => Some(scroll),
             };
+            // One key of memory: only a bare `g` that did not consume a pair
+            // leaves the next key waiting for its second `g`.
+            self.help_pending_g = key == KeyCode::Char('g') && !shift && !armed;
+            self.help = next;
             return;
         }
 
@@ -90,6 +111,12 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                 match f.handle_key_with_modifiers(key, modifiers) {
                     FormAction::Cancel => {
                         if f.mode() == FormMode::Edit {
+                            // Nothing changed means nothing to save: close, no prompt.
+                            if !f.is_dirty() {
+                                self.active = ActiveView::Main;
+                                self.set_status("No changes to save", MessageKind::Info);
+                                return;
+                            }
                             let placeholder = EntryForm::new_add(None);
                             let form = std::mem::replace(f, placeholder);
                             self.active = ActiveView::ConfirmSave { form };
@@ -105,6 +132,12 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                     FormAction::Confirm(_) => {
                         let mode = f.mode();
                         if mode == FormMode::Edit {
+                            // The modal asks about CHANGES; a clean form has none.
+                            if !f.is_dirty() {
+                                self.active = ActiveView::Main;
+                                self.set_status("No changes to save", MessageKind::Info);
+                                return;
+                            }
                             let placeholder = EntryForm::new_add(None);
                             let form = std::mem::replace(f, placeholder);
                             self.active = ActiveView::ConfirmSave { form };

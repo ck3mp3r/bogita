@@ -1,3 +1,4 @@
+use crate::app::InitParts;
 use crate::app::{App, InitResult};
 use crate::crypto::age::AgeCrypto;
 use crate::domain::AgeIdentity;
@@ -219,6 +220,56 @@ async fn lock_and_unlock_round_trip() -> Result<()> {
     assert_eq!(locked_state, (true, true));
     assert!(!app.is_locked);
     assert!(app.identity.is_some());
+    Ok(())
+}
+
+// ── pending boot ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn pending_boots_locked_and_stages_nothing_until_unlock() -> Result<()> {
+    // -- Setup & Fixtures: an encrypted identity on disk, an empty keychain
+    let dir = TempDir::new()?;
+    let identity = AgeIdentity::generate();
+    let passphrase = SecretString::from("test passphrase");
+    let identity_path = dir.path().join("identity.age");
+    write_identity_encrypted(&identity, &passphrase, &identity_path)?;
+    let db_path = dir.path().join("pending.db");
+    let storage = SqliteStorage::new(&db_path, AgeCrypto).await?;
+    let parts = InitParts {
+        config: AppConfig {
+            identity_path: Some(identity_path.clone()),
+            ..AppConfig::default()
+        },
+        config_path: dir.path().join("config.toml"),
+        identity_path,
+        session: Session::new(MockKeychain::new()),
+        registry: VaultRegistry::new(storage),
+        lock_timeout: None,
+        pending_identity: None,
+        identity_store: EncryptedIdentityFile,
+    };
+
+    // -- Exec
+    let mut app: TestApp = App::pending(parts);
+
+    // -- Check: locked, no identity, and the keychain stays empty
+    assert!(app.is_locked, "a pending boot is locked");
+    assert!(app.identity.is_none(), "a pending boot holds no identity");
+    assert!(
+        app.session.get_identity()?.is_none(),
+        "a pending boot must not stage the identity in the keychain"
+    );
+
+    // -- Exec: the in-TUI unlock path
+    app.unlock(&passphrase)?;
+
+    // -- Check: staging happens at unlock, not before
+    assert!(!app.is_locked);
+    assert!(app.identity.is_some());
+    assert!(
+        app.session.get_identity()?.is_some(),
+        "unlock stages the identity for the agent"
+    );
     Ok(())
 }
 

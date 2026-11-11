@@ -1,12 +1,14 @@
 //! Centered modal and overlay painters.
 
-use super::bindings;
-use rat_widget::text_input::TextInputState;
+use rat_widget::text::HasScreenCursor;
+use rat_widget::text_input::{TextInput, TextInputState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
+
+use super::bindings::{self, Binding};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,91 +36,183 @@ pub(super) fn wrap_text(message: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Layout and content of a centered modal.
-struct Modal<'a> {
+/// One centered dialog: a title, a message, and the action rows its own
+/// binding table defines.
+///
+/// Dialogs are widgets — they draw their keys in-box, from the same tables the
+/// `?` overlay reads, so a dialog cannot advertise a chord nothing routes and
+/// cannot drift from the registry. The footer stays the minimal ` [?] help `.
+pub(super) struct ConfirmModal {
     width: u16,
     height: u16,
     title: Line<'static>,
     border_color: Color,
-    /// `None` fills the modal with the message; `Some(height)` adds a fixed
-    /// message row plus a hint row.
-    message_band: Option<u16>,
     message: Vec<Line<'static>>,
-    hint: &'a str,
+    table: &'static [Binding],
 }
 
-/// Shared frame for the centered modals: clear the area, draw the double border
-/// with the given title and colour, then the message band and the hint row.
-fn render_centered_modal(frame: &mut Frame, area: Rect, modal: Modal<'_>) {
-    let modal_w = modal.width.min(area.width);
-    let modal_h = modal.height.min(area.height);
-    let x = area.x + area.width.saturating_sub(modal_w) / 2;
-    let y = area.y + area.height.saturating_sub(modal_h) / 2;
-    let modal_area = Rect::new(x, y, modal_w, modal_h);
+impl ConfirmModal {
+    /// The dialog's action row, straight from its surface table.
+    fn action_rows(&self) -> String {
+        bindings::hint(self.table)
+    }
 
-    frame.render_widget(Clear, modal_area);
+    fn render(&self, frame: &mut Frame, area: Rect) {
+        // Hug the action row: a dialog that clips its own keys teaches nothing.
+        let needed = self.action_rows().chars().count() as u16 + 4;
+        let modal_w = self.width.max(needed).min(area.width);
+        let modal_h = self.height.min(area.height);
+        let x = area.x + area.width.saturating_sub(modal_w) / 2;
+        let y = area.y + area.height.saturating_sub(modal_h) / 2;
+        let modal_area = Rect::new(x, y, modal_w, modal_h);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(modal.border_color))
-        .title(modal.title);
+        frame.render_widget(Clear, modal_area);
 
-    let inner = block.inner(modal_area);
-    frame.render_widget(block, modal_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(self.border_color))
+            .title(self.title.clone());
+        let inner = block.inner(modal_area);
+        frame.render_widget(block, modal_area);
 
-    let constraints = match modal.message_band {
-        Some(rows) => vec![
-            Constraint::Length(rows),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ],
-        None => vec![Constraint::Min(1), Constraint::Length(1)],
-    };
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(inner);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .split(inner);
 
-    frame.render_widget(Paragraph::new(modal.message), rows[0]);
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            modal.hint.to_string(),
-            Style::default().fg(Color::DarkGray),
-        )),
-        rows[1],
-    );
-}
+        frame.render_widget(Paragraph::new(self.message.clone()), rows[0]);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" {} ", self.action_rows()),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            rows[1],
+        );
+    }
 
-/// Render a centered error modal over the given area.
-pub(super) fn render_error_modal(frame: &mut Frame, area: Rect, message: &str) {
-    // Modal: up to 60 wide, at least 5 tall (more if message is long).
-    let modal_w = 60u16.min(area.width);
-    // Wrap message into modal_w - 4 (2 border + 2 padding) columns.
-    let inner_w = (modal_w as usize).saturating_sub(4);
-    let wrapped = wrap_text(message, inner_w);
-    let modal_h = (wrapped.len() as u16 + 4).min(area.height);
-    let lines = wrapped
-        .into_iter()
-        .map(|text| Line::from(Span::styled(text, Style::default().fg(Color::White))))
-        .collect();
+    /// Save-changes dialog.
+    pub(super) fn save(entry_name: &str) -> Self {
+        Self {
+            width: 44,
+            height: 5,
+            title: Line::from(" Save changes "),
+            border_color: Color::Yellow,
+            message: vec![Line::from(vec![
+                Span::raw("  Save changes to "),
+                Span::styled(
+                    entry_name.to_string(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("?"),
+            ])],
+            table: bindings::table(bindings::Surface::ConfirmSave),
+        }
+    }
 
-    render_centered_modal(
-        frame,
-        area,
-        Modal {
-            width: modal_w,
-            height: modal_h,
+    /// Discard-changes dialog.
+    pub(super) fn discard() -> Self {
+        Self {
+            width: 44,
+            height: 5,
+            title: Line::from(" Discard changes "),
+            border_color: Color::Yellow,
+            message: vec![Line::from("  You have unsaved changes. Discard?")
+                .style(Style::default().fg(Color::White))],
+            table: bindings::table(bindings::Surface::ConfirmDiscard),
+        }
+    }
+
+    /// Delete-entry dialog.
+    pub(super) fn delete_entry(entry_name: &str) -> Self {
+        Self {
+            width: 44,
+            height: 5,
+            title: Line::from(" Delete entry "),
+            border_color: Color::Red,
+            message: vec![Line::from(vec![
+                Span::raw("  Delete "),
+                Span::styled(
+                    entry_name.to_string(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("?"),
+            ])],
+            table: bindings::table(bindings::Surface::ConfirmDelete),
+        }
+    }
+
+    /// Delete-vault dialog.
+    pub(super) fn delete_vault(vault_name: &str) -> Self {
+        Self {
+            width: 44,
+            height: 5,
+            title: Line::from(" Delete vault "),
+            border_color: Color::Red,
+            message: vec![Line::from(vec![
+                Span::raw("  Delete vault "),
+                Span::styled(
+                    vault_name.to_string(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("?"),
+            ])],
+            table: bindings::table(bindings::Surface::ConfirmDelete),
+        }
+    }
+
+    /// Error dialog — as wide as the message needs, one row of dismiss keys.
+    pub(super) fn error(message: &str, area_width: u16, area_height: u16) -> Self {
+        let width = 60u16.min(area_width);
+        let inner_w = usize::from(width).saturating_sub(4);
+        let wrapped = wrap_text(message, inner_w);
+        let height = (wrapped.len() as u16 + 4).min(area_height);
+        Self {
+            width,
+            height,
             title: Line::from(Span::styled(
                 " Error ",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             )),
             border_color: Color::Red,
-            message_band: None,
-            message: lines,
-            hint: "[Esc / Enter] dismiss",
-        },
-    );
+            message: wrapped
+                .into_iter()
+                .map(|text| Line::from(Span::styled(text, Style::default().fg(Color::White))))
+                .collect(),
+            table: bindings::table(bindings::Surface::ErrorOverlay),
+        }
+    }
+}
+
+/// Render a centered error modal over the given area.
+pub(super) fn render_error_modal(frame: &mut Frame, area: Rect, message: &str) {
+    ConfirmModal::error(message, area.width, area.height).render(frame, area);
+}
+
+/// The entry-form modal rect: identity-width, hugging its content.
+///
+/// Width is capped at 60% of the body and never below 40 columns. Height follows
+/// the row count — vault row, name row, one three-line row per field, the hint
+/// row and the two border rows — capped at 90% of the body, so the modal never
+/// keeps dead rows below the last field.
+pub fn form_modal_rect(body: Rect, field_count: usize) -> Rect {
+    let min_width = 40.min(body.width);
+    let width = (body.width * 6 / 10).max(min_width).min(body.width);
+    let content = 1 + 3 + 3 * field_count as u16 + 1 + 2;
+    let height = content.min((body.height * 9 / 10).max(1)).min(body.height);
+    let x = body.x + body.width.saturating_sub(width) / 2;
+    let y = body.y + body.height.saturating_sub(height) / 2;
+    Rect::new(x, y, width, height)
 }
 
 /// Compute a centered rectangle within `area` at the given width and height
@@ -144,120 +238,33 @@ pub fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rec
 
 /// Render a small centered confirmation modal over the full terminal area.
 pub(super) fn render_confirm_delete_modal(frame: &mut Frame, area: Rect, entry_name: &str) {
-    let lines = vec![Line::from(vec![
-        Span::raw("  Delete "),
-        Span::styled(
-            entry_name.to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("?"),
-    ])];
-
-    render_centered_modal(
-        frame,
-        area,
-        Modal {
-            width: 44,
-            height: 5,
-            title: Line::from(" Delete entry "),
-            border_color: Color::Red,
-            message_band: Some(1),
-            message: lines,
-            hint: "  [d] delete  [c/Esc] cancel",
-        },
-    );
+    ConfirmModal::delete_entry(entry_name).render(frame, area);
 }
 
 /// Render a small centered confirmation modal for deleting a vault.
 pub(super) fn render_confirm_delete_vault_modal(frame: &mut Frame, area: Rect, vault_name: &str) {
-    let lines = vec![Line::from(vec![
-        Span::raw("  Delete vault "),
-        Span::styled(
-            vault_name.to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("?"),
-    ])];
-
-    render_centered_modal(
-        frame,
-        area,
-        Modal {
-            width: 44,
-            height: 5,
-            title: Line::from(" Delete vault "),
-            border_color: Color::Red,
-            message_band: Some(1),
-            message: lines,
-            hint: "  [d] delete  [c/Esc] cancel",
-        },
-    );
+    ConfirmModal::delete_vault(vault_name).render(frame, area);
 }
 
 /// Render a small centered confirmation modal for saving edits.
 pub(super) fn render_confirm_save_modal(frame: &mut Frame, area: Rect, entry_name: &str) {
-    let lines = vec![Line::from(vec![
-        Span::raw("  Save changes to "),
-        Span::styled(
-            entry_name.to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("?"),
-    ])];
-    let hint = bindings::hint(bindings::CONFIRM_SAVE);
-
-    render_centered_modal(
-        frame,
-        area,
-        Modal {
-            width: 44,
-            height: 5,
-            title: Line::from(" Save changes "),
-            border_color: Color::Yellow,
-            message_band: Some(1),
-            message: lines,
-            hint: &hint,
-        },
-    );
+    ConfirmModal::save(entry_name).render(frame, area);
 }
 
 /// Render a small centered confirmation modal for discarding changes.
 pub(super) fn render_confirm_discard_modal(frame: &mut Frame, area: Rect) {
-    let lines =
-        vec![Line::from("  You have unsaved changes. Discard?")
-            .style(Style::default().fg(Color::White))];
-    let hint = bindings::hint(bindings::CONFIRM_DISCARD);
-
-    render_centered_modal(
-        frame,
-        area,
-        Modal {
-            width: 44,
-            height: 5,
-            title: Line::from(" Discard changes "),
-            border_color: Color::Yellow,
-            message_band: Some(1),
-            message: lines,
-            hint: &hint,
-        },
-    );
+    ConfirmModal::discard().render(frame, area);
 }
 
 /// Render the lock screen: a centered modal with a masked passphrase prompt.
 pub(super) fn render_lock_screen(
     frame: &mut Frame,
     area: Rect,
-    passphrase_input: &TextInputState,
+    passphrase_input: &mut TextInputState,
     error: Option<&str>,
 ) {
     let modal_w = 50u16.min(area.width);
-    let modal_h = 8u16.min(area.height);
+    let modal_h = 7u16.min(area.height);
     let x = area.x + area.width.saturating_sub(modal_w) / 2;
     let y = area.y + area.height.saturating_sub(modal_h) / 2;
     let modal_area = Rect::new(x, y, modal_w, modal_h);
@@ -284,13 +291,15 @@ pub(super) fn render_lock_screen(
     let inner = block.inner(modal_area);
     frame.render_widget(block, modal_area);
 
+    // The input is three rows — its two borders and one content row — because a
+    // bordered cell paints nothing at all in a single row, and the mask lives in
+    // that content row.
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(0),
         ])
         .split(inner);
 
@@ -310,40 +319,30 @@ pub(super) fn render_lock_screen(
         );
     }
 
-    // Masked passphrase input
-    let masked: String = passphrase_input.text().chars().map(|_| '•').collect();
-    let input_widget = Paragraph::new(Span::styled(masked, Style::default().fg(Color::Cyan)))
+    // Masked passphrase input: the same widget the form's obscured cells use, so
+    // the mask glyphs and the caret come from the input itself.
+    //
+    // The passphrase cell is the lock screen's only input, so it always holds
+    // focus: that is what paints the focused edge and the screen cursor.
+    passphrase_input.focus.set(true);
+    let input_widget = TextInput::new()
+        .style(Style::default().fg(Color::Cyan))
+        .focus_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .passwd()
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Plain)
                 .border_style(Style::default().fg(Color::DarkGray)),
         );
-    frame.render_widget(input_widget, rows[1]);
-
-    // Cursor position indicator
-    let cursor_pos = passphrase_input.text().len();
-    let cursor_text = if cursor_pos > 0 {
-        format!("{} chars", cursor_pos)
-    } else {
-        String::new()
-    };
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            cursor_text,
-            Style::default().fg(Color::DarkGray),
-        )),
-        rows[2],
-    );
-
-    // Hint line
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            "[Enter] unlock  [Esc] quit",
-            Style::default().fg(Color::DarkGray),
-        )),
-        rows[3],
-    );
+    frame.render_stateful_widget(input_widget, rows[1], &mut *passphrase_input);
+    if let Some((cx, cy)) = passphrase_input.screen_cursor() {
+        frame.set_cursor_position((cx, cy));
+    }
 }
 
 /// Render a vault picker dropdown overlay on top of the entry form.

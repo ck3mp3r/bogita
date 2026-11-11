@@ -44,6 +44,14 @@ pub(super) async fn make_app() -> Result<TestApp> {
     })
 }
 
+/// Build the same App in its locked state, the way a TUI boot finds it.
+pub(super) async fn make_locked_app() -> Result<TestApp> {
+    let mut app = make_app().await?;
+    app.identity = None;
+    app.is_locked = true;
+    Ok(app)
+}
+
 /// Build an App seeded with one entry in the Personal vault.
 pub(super) async fn make_app_with_entry() -> Result<TestApp> {
     // -- Setup & Fixtures

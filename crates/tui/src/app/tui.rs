@@ -102,6 +102,13 @@ pub struct Tui<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> {
     pub last_keypress: Instant,
     /// `Some(scroll)` while the `?` keybindings overlay is open.
     pub(super) help: Option<u16>,
+    /// Rows the help overlay last painted — half of this is one Ctrl-d step.
+    pub(super) help_viewport: u16,
+    /// The furthest the help overlay may scroll, as of the last frame.
+    pub(super) help_max_scroll: u16,
+    /// Whether a `g` is waiting for its second `g` in the help overlay. One key
+    /// of memory, cleared by any other key.
+    pub(super) help_pending_g: bool,
 }
 
 impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
@@ -118,43 +125,56 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
 
         let main_view = MainView::new(vaults.clone(), all_entries.clone());
         let detail_entry = all_entries.into_iter().next();
-        let (active, error_message) = match &context {
-            TuiContext::AddEntry { name, vault } => {
-                let (vault_id, vault_name) = match resolve_vault(&vaults, vault.as_deref()) {
-                    Some(vault) => (vault.id, vault.name.clone()),
-                    None => (Uuid::nil(), String::new()),
-                };
-                let mut form = EntryForm::new_add(name.clone());
-                form.set_vault(vault_id, vault_name);
-                (ActiveView::Form(form), None)
-            }
-            TuiContext::AddVault { name } => {
-                (ActiveView::VaultForm(VaultForm::new(name.clone())), None)
-            }
-            TuiContext::EditEntry { name, vault } => {
-                match find_named_entry(&app, &vaults, vault.as_deref(), name).await? {
-                    Some((entry, vault)) => {
-                        let mut form = EntryForm::new_edit(&entry);
-                        form.set_vault(vault.id, vault.name.clone());
-                        (ActiveView::Form(form), None)
+        // A locked app boots on its own lock screen: the passphrase is asked in
+        // here, never on a terminal prompt. The startup context is dropped in
+        // that case — its intent is re-dispatched after unlock (deferred).
+        let (active, error_message) = if app.is_locked {
+            (
+                ActiveView::Locked {
+                    passphrase_input: TextInputState::named("passphrase"),
+                    error: None,
+                },
+                None,
+            )
+        } else {
+            match &context {
+                TuiContext::AddEntry { name, vault } => {
+                    let (vault_id, vault_name) = match resolve_vault(&vaults, vault.as_deref()) {
+                        Some(vault) => (vault.id, vault.name.clone()),
+                        None => (Uuid::nil(), String::new()),
+                    };
+                    let mut form = EntryForm::new_add(name.clone());
+                    form.set_vault(vault_id, vault_name);
+                    (ActiveView::Form(form), None)
+                }
+                TuiContext::AddVault { name } => {
+                    (ActiveView::VaultForm(VaultForm::new(name.clone())), None)
+                }
+                TuiContext::EditEntry { name, vault } => {
+                    match find_named_entry(&app, &vaults, vault.as_deref(), name).await? {
+                        Some((entry, vault)) => {
+                            let mut form = EntryForm::new_edit(&entry);
+                            form.set_vault(vault.id, vault.name.clone());
+                            (ActiveView::Form(form), None)
+                        }
+                        None => (ActiveView::Main, Some(entry_not_found(name))),
                     }
-                    None => (ActiveView::Main, Some(entry_not_found(name))),
                 }
-            }
-            TuiContext::DeleteEntry { name, vault } => {
-                match find_named_entry(&app, &vaults, vault.as_deref(), name).await? {
-                    Some((entry, vault)) => (
-                        ActiveView::ConfirmDelete {
-                            entry_id: entry.id,
-                            vault_id: vault.id,
-                            name: entry.name.clone(),
-                        },
-                        None,
-                    ),
-                    None => (ActiveView::Main, Some(entry_not_found(name))),
+                TuiContext::DeleteEntry { name, vault } => {
+                    match find_named_entry(&app, &vaults, vault.as_deref(), name).await? {
+                        Some((entry, vault)) => (
+                            ActiveView::ConfirmDelete {
+                                entry_id: entry.id,
+                                vault_id: vault.id,
+                                name: entry.name.clone(),
+                            },
+                            None,
+                        ),
+                        None => (ActiveView::Main, Some(entry_not_found(name))),
+                    }
                 }
+                TuiContext::Default => (ActiveView::Main, None),
             }
-            TuiContext::Default => (ActiveView::Main, None),
         };
         Ok(Self {
             context,
@@ -170,6 +190,9 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             status_message_kind: MessageKind::Info,
             last_keypress: Instant::now(),
             help: None,
+            help_viewport: 0,
+            help_max_scroll: 0,
+            help_pending_g: false,
         })
     }
 

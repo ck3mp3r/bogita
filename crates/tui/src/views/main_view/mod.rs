@@ -12,6 +12,8 @@
 // region:    --- Modules
 
 mod actions;
+mod detail;
+mod detail_layout;
 mod keys;
 mod render;
 mod state;
@@ -23,8 +25,17 @@ pub use state::MainView;
 
 // region:    --- Tests
 #[cfg(test)]
+#[path = "../../../test/views/main_view/detail_category.rs"]
+mod main_view_detail_category_test;
+#[cfg(test)]
+#[path = "../../../test/views/main_view/detail.rs"]
+mod main_view_detail_test;
+#[cfg(test)]
 #[path = "../../../test/views/main_view/entries_navigation.rs"]
 mod main_view_entries_navigation_test;
+#[cfg(test)]
+#[path = "../../../test/views/main_view/navigation_vim.rs"]
+mod main_view_navigation_vim_test;
 #[cfg(test)]
 #[path = "../../../test/views/main_view/reveal_actions.rs"]
 mod main_view_reveal_actions_test;

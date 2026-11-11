@@ -18,8 +18,8 @@ fn test_entry_form_new_row_boolean_type_authors_boolean_value() {
     }
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
-    for _ in 0..6 {
-        form.handle_key(KeyCode::Char('j')); // → 6 = boolean
+    for _ in 0..7 {
+        form.handle_key(KeyCode::Char('j')); // → 7 = boolean
     }
     form.handle_key(KeyCode::Enter); // apply the selection
 

@@ -96,6 +96,14 @@ impl MainView {
             };
         }
 
+        // A pending `g` lasts exactly one key: anything but the second `g` clears
+        // it, so `g x g` starts over instead of jumping.
+        if key != KeyCode::Char('g') {
+            self.pending_g = false;
+        }
+        let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+        let shift = modifiers.contains(KeyModifiers::SHIFT);
+
         match key {
             KeyCode::Char(' ') => {
                 self.leader_mode = true;
@@ -109,32 +117,38 @@ impl MainView {
                 self.vault_picker_open = true;
                 MainViewAction::None
             }
-            KeyCode::Tab => {
-                self.focused = self.focused.next();
-                if self.focused == Column::Detail {
-                    self.detail_field = 0;
-                    if let Some(e) = self.selected_entry() {
-                        return MainViewAction::SelectEntry {
-                            entry_id: e.id,
-                            vault_id: e.vault_id,
-                        };
-                    }
-                }
+            KeyCode::Tab => self.move_focus(self.focused.next()),
+            KeyCode::BackTab => self.move_focus(self.focused.prev()),
+            // Vim-grade pane focus: the same transition, spelled h/l.
+            KeyCode::Char('h') => self.move_focus(self.focused.prev()),
+            KeyCode::Char('l') => self.move_focus(self.focused.next()),
+            // gg / G reach the bounds of the focused list.
+            //
+            // A terminal reports the capital chord in one of two shapes: as the
+            // uppercase glyph `G`, or as the lowercase `g` with SHIFT set (kitty
+            // and xterm modifyOtherKeys deliver the base code point plus the
+            // modifier). Both mean the same chord here, so the SHIFT arms come
+            // before the pending-`g` arm and never open a `gg` sequence. Text
+            // inputs keep the discipline rule and take the glyph as typed.
+            KeyCode::Char('g') if shift => {
+                self.pending_g = false;
+                self.select_bound(false)
+            }
+            KeyCode::Char('g') if self.pending_g => {
+                self.pending_g = false;
+                self.select_bound(true)
+            }
+            KeyCode::Char('g') => {
+                self.pending_g = true;
                 MainViewAction::None
             }
-            KeyCode::BackTab => {
-                self.focused = self.focused.next();
-                if self.focused == Column::Detail {
-                    self.detail_field = 0;
-                    if let Some(e) = self.selected_entry() {
-                        return MainViewAction::SelectEntry {
-                            entry_id: e.id,
-                            vault_id: e.vault_id,
-                        };
-                    }
-                }
-                MainViewAction::None
+            KeyCode::Char('G') => {
+                self.pending_g = false;
+                self.select_bound(false)
             }
+            // Ctrl-d / Ctrl-u move half the painted window inside the list.
+            KeyCode::Char('d') if ctrl => self.half_page(true),
+            KeyCode::Char('u') if ctrl => self.half_page(false),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_down();
                 if self.focused == Column::Entries {
@@ -163,7 +177,8 @@ impl MainView {
                 self.toggle_reveal();
                 MainViewAction::None
             }
-            KeyCode::Char('c') => {
+            // `y` yanks the selected field; `c` stays free for Ctrl-c's grammar.
+            KeyCode::Char('y') => {
                 if self.focused == Column::Detail {
                     match self.selected_entry() {
                         Some(e) => MainViewAction::CopyField {
@@ -177,6 +192,105 @@ impl MainView {
                 }
             }
             _ => MainViewAction::None,
+        }
+    }
+
+    /// Move focus to `target`, mirroring the Tab transition: reaching the detail
+    /// pane asks the caller for the entry so the pane can be filled.
+    fn move_focus(&mut self, target: Column) -> MainViewAction {
+        let entering_detail = target == Column::Detail;
+        self.focused = target;
+        if entering_detail {
+            self.detail_field = 0;
+            if let Some(e) = self.selected_entry() {
+                return MainViewAction::SelectEntry {
+                    entry_id: e.id,
+                    vault_id: e.vault_id,
+                };
+            }
+        }
+        MainViewAction::None
+    }
+
+    /// `gg` / `G`: select the first (`first`) or last row of the focused list.
+    ///
+    /// Every scrollable surface owns the whole navigation set: the entries list
+    /// moves its selection, the detail pane moves inside the entry's fields.
+    fn select_bound(&mut self, first: bool) -> MainViewAction {
+        match self.focused {
+            Column::Entries => {
+                let len = self.visible_entries().len();
+                if len == 0 {
+                    return MainViewAction::None;
+                }
+                let idx = if first { 0 } else { len - 1 };
+                self.entry_state.select(Some(idx));
+                self.detail_field = 0;
+                self.revealed.clear();
+                self.entry_action()
+            }
+            Column::Detail => {
+                let count = self.field_count();
+                if count == 0 {
+                    return MainViewAction::None;
+                }
+                self.detail_field = if first { 0 } else { count - 1 };
+                self.revealed.clear();
+                MainViewAction::None
+            }
+        }
+    }
+
+    /// `Ctrl-d` / `Ctrl-u`: jump half the painted window inside the list.
+    fn half_page(&mut self, down: bool) -> MainViewAction {
+        let step = (self.list_view_rows / 2).max(1);
+        match self.focused {
+            Column::Entries => {
+                let len = self.visible_entries().len();
+                if len == 0 {
+                    return MainViewAction::None;
+                }
+                let cur = self.entry_state.selected().unwrap_or(0);
+                let next = if down {
+                    (cur + step).min(len - 1)
+                } else {
+                    cur.saturating_sub(step)
+                };
+                self.entry_state.select(Some(next));
+                self.detail_field = 0;
+                self.revealed.clear();
+                self.entry_action()
+            }
+            Column::Detail => {
+                let count = self.field_count();
+                if count == 0 {
+                    return MainViewAction::None;
+                }
+                let cur = self.detail_field.min(count - 1);
+                self.detail_field = if down {
+                    (cur + step).min(count - 1)
+                } else {
+                    cur.saturating_sub(step)
+                };
+                self.revealed.clear();
+                MainViewAction::None
+            }
+        }
+    }
+
+    /// Number of rows in the focused detail pane.
+    fn field_count(&self) -> usize {
+        self.selected_entry().map(|e| e.fields.len()).unwrap_or(0)
+    }
+
+    /// The `SelectEntry` action for the current selection, or `None`.
+    fn entry_action(&self) -> MainViewAction {
+        match self.selected_entry() {
+            Some(e) => MainViewAction::SelectEntry {
+                entry_id: e.id,
+                vault_id: e.vault_id,
+            },
+            None => MainViewAction::None,
         }
     }
 

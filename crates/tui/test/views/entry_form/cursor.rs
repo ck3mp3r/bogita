@@ -29,7 +29,7 @@ fn form_on_notes_slot() -> EntryForm {
     add_field(&mut form); // add field, focus → key slot
     form.handle_key(KeyCode::Tab); // key → type slot
     open_dropdown(&mut form);
-    for _ in 0..5 {
+    for _ in 0..6 {
         form.handle_key(KeyCode::Char('j')); // text → notes
     }
     form.handle_key(KeyCode::Enter); // confirm selection

@@ -44,10 +44,10 @@ async fn g_key_on_ssh_key_entry_does_not_open_gen_view() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT);
 
     // -- Check
-    let hint = tui.status_hint();
-    assert!(
-        !hint.contains("[g] regenerate"),
-        "[g] on an SshKey entry must NOT open the generator, got: {hint}"
+    assert_ne!(
+        tui.surface(),
+        crate::app::bindings::Surface::PasswordGen,
+        "[g] on an SshKey entry must NOT open the generator"
     );
     Ok(())
 }
@@ -67,10 +67,10 @@ async fn g_key_on_token_entry_edit_opens_gen_view() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('g'), KeyModifiers::ALT);
 
     // -- Check
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[g] regenerate"),
-        "[g] on a Token entry must open the generator, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::PasswordGen,
+        "[g] on a Token entry must open the generator"
     );
     Ok(())
 }

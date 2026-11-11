@@ -1,7 +1,10 @@
-//! Rendering — leader overlay, vault picker, entry columns, and detail rows.
+//! Rendering — leader overlay, vault picker, entry columns, and the detail
+//! pane frame. The pane's own cells live in `detail.rs`.
 
 use super::actions::Column;
+use super::detail;
 use super::state::MainView;
+use crate::app::bindings;
 use bogita_core::domain::{Entry, FieldType, FieldValue};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -10,49 +13,25 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragr
 use ratatui::Frame;
 
 impl MainView {
+    /// The leader menu — one row per binding the focused column offers, read
+    /// from the registry so the menu cannot drift from the footer.
     pub fn render_leader_overlay(&self, frame: &mut Frame, area: Rect) {
-        // Determine height and content based on focused column
-        let (h, lines): (u16, Vec<Line>) = match self.focused {
-            Column::Entries => {
-                let lines = vec![
-                    Line::from(vec![
-                        Span::styled(
-                            " [a] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Add entry"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled(
-                            " [e] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Edit entry"),
-                    ]),
-                    Line::from(vec![
-                        Span::styled(
-                            " [d] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Delete entry"),
-                    ]),
-                ];
-                (5, lines)
-            }
-            Column::Detail => {
-                let lines = vec![Line::from(Span::styled(
-                    " No actions available ",
-                    Style::default().fg(Color::DarkGray),
-                ))];
-                (3, lines)
-            }
-        };
+        let rows = bindings::leader_rows(self.focused == Column::Detail);
+        let lines: Vec<Line> = rows
+            .iter()
+            .map(|(chord, action)| {
+                Line::from(vec![
+                    Span::styled(
+                        format!(" {chord} "),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(*action),
+                ])
+            })
+            .collect();
+        let h = lines.len() as u16 + 2;
 
         const W: u16 = 34;
         let x = area.x + area.width.saturating_sub(W) / 2;
@@ -152,6 +131,8 @@ impl MainView {
 
     fn render_entries(&mut self, frame: &mut Frame, area: Rect) {
         let focused = self.focused == Column::Entries;
+        // The painted height is what a half page means: keep it for Ctrl-d/u.
+        self.list_view_rows = usize::from(area.height.saturating_sub(2)).max(1);
         let block = Block::default()
             .title(" Entries ")
             .borders(Borders::ALL)
@@ -195,7 +176,7 @@ impl MainView {
             return;
         };
 
-        let title = format!(" {} ", entry.name);
+        let title = format!(" Detail · {} ", entry.name);
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
@@ -207,99 +188,12 @@ impl MainView {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // Split inner into per-field rows — one row per field, no extra gauge row.
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                entry
-                    .fields
-                    .iter()
-                    .map(|_| Constraint::Length(2))
-                    .chain(std::iter::once(Constraint::Min(1)))
-                    .collect::<Vec<_>>(),
-            )
-            .split(inner);
-
-        let mut row_idx = 0usize;
-        for (field_idx, field) in entry.fields.iter().enumerate() {
-            let selected = focused && field_idx == self.detail_field;
-
-            let (display_value, is_hidden) = if field.field_type == FieldType::TotpSecret {
-                let now_secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let (code, secs) = entry
-                    .totp_code(&field.key, now_secs)
-                    .unwrap_or_else(|| ("------".to_string(), 0));
-                (format!("{code}  ({secs}s)"), false)
-            } else {
-                let hidden = matches!(field.value, FieldValue::Hidden(_));
-                (self.field_display(field_idx, &field.value), hidden)
-            };
-
-            self.render_field_row(
-                frame,
-                rows[row_idx],
-                &field.key,
-                &display_value,
-                selected,
-                is_hidden,
-            );
-            row_idx += 1;
-        }
-
-        // Hint bar
-        if let Some(hint_area) = rows.get(row_idx) {
-            let hints = if focused {
-                " [j/k] scroll  [s] reveal  [c] copy  [Tab] columns "
-            } else {
-                " [Tab] focus detail "
-            };
-            let hint = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray));
-            frame.render_widget(hint, *hint_area);
-        }
-    }
-
-    fn render_field_row(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        key: &str,
-        value: &str,
-        selected: bool,
-        is_hidden: bool,
-    ) {
-        let key_style = Style::default().fg(Color::Cyan);
-        let val_style = if selected {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        let lock = if is_hidden {
-            Span::styled(" 🔒", Style::default().fg(Color::DarkGray))
-        } else {
-            Span::raw("")
-        };
-        let line = Line::from(vec![
-            Span::styled(format!("{key:<16} "), key_style),
-            Span::styled(value.to_string(), val_style),
-            lock,
-        ]);
-        let prefix = if selected { "▶ " } else { "  " };
-        let row = Paragraph::new(line)
-            .style(Style::default())
-            .block(Block::default().borders(Borders::NONE).title(prefix));
-        frame.render_widget(row, area);
+        detail::paint(frame, inner, &self.detail_cells(entry));
     }
 
     fn field_display(&self, idx: usize, value: &FieldValue) -> String {
         match value {
-            FieldValue::Hidden(secret) if !self.is_field_revealed(idx) => {
-                "•".repeat(secret.len().max(6))
-            }
+            FieldValue::Hidden(_) if !self.is_field_revealed(idx) => detail::masked_secret(),
             _ => value.to_string(),
         }
     }

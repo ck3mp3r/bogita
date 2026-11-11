@@ -110,6 +110,7 @@ impl EntryForm {
                     textarea_state,
                     touched: true,
                     agent_servable,
+                    chosen: false,
                 }
             })
             .collect();
@@ -269,6 +270,25 @@ impl EntryForm {
     /// `true` when the form edits an entry of type [`EntryType::SshKey`].
     pub fn is_ssh_key(&self) -> bool {
         self.entry_type == EntryType::SshKey
+    }
+
+    /// `true` when row `index` still shows the shape it loaded with, the user
+    /// never picked a type for it, and that shape is the collapsed `Text` arm.
+    ///
+    /// Only such a row may be re-typed from its key: the load collapsed the
+    /// authored type to `Text`, so the key is the only evidence left, and
+    /// evidence is admissible only while nothing was chosen or edited.
+    pub(super) fn row_is_untouched(&self, index: usize, ff: &FormField) -> bool {
+        if ff.chosen || ff.field_type != FormFieldType::Text {
+            return false;
+        }
+        let Some((_, original)) = self.original.as_ref() else {
+            return false;
+        };
+        let Some((key, value, _)) = original.get(index) else {
+            return false;
+        };
+        *key == ff.key_state.text() && *value == self.field_value_text(ff)
     }
 
     /// Human-readable label for the currently focused slot.

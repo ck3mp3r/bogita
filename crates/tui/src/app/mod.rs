@@ -3,7 +3,8 @@
 // region:    --- Modules
 
 mod actions;
-mod bindings;
+pub(crate) mod bindings;
+mod help;
 mod keys;
 mod modals;
 mod paste;
@@ -12,7 +13,7 @@ pub mod signals;
 mod tui;
 
 pub use actions::PendingCopy;
-pub use modals::centered_rect;
+pub use modals::{centered_rect, form_modal_rect};
 pub use tui::{MessageKind, RunState, Tui};
 
 #[cfg(all(test, feature = "integration"))]
@@ -27,6 +28,9 @@ mod app_confirm_enter_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/deep_links.rs"]
 mod app_deep_links_test;
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/app/dialogs.rs"]
+mod app_dialogs_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/entry_form_roundtrip.rs"]
 mod app_entry_form_roundtrip_test;
@@ -49,8 +53,14 @@ mod app_hints_drift_test;
 #[path = "../../test/app/lock_screen_input.rs"]
 mod app_lock_screen_input_test;
 #[cfg(all(test, feature = "integration"))]
+#[path = "../../test/app/lock_screen_render.rs"]
+mod app_lock_screen_render_test;
+#[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/main_and_navigation.rs"]
 mod app_main_and_navigation_test;
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/app/nav_live_path.rs"]
+mod app_nav_live_path_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/overlays_and_lock.rs"]
 mod app_overlays_and_lock_test;
@@ -63,6 +73,9 @@ mod app_rendering_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/signals.rs"]
 mod app_signals_test;
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/app/startup_locked.rs"]
+mod app_startup_locked_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/app/validation.rs"]
 mod app_validation_test;

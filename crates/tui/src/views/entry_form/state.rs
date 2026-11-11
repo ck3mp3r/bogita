@@ -1,20 +1,14 @@
 //! Derived `EntryForm` state: validation, focus rebuilding, and scroll upkeep.
 
-use bogita_core::domain::SshKeyMaterial;
-use bogita_core::service::otp::decode_secret;
 use rat_focus::{Focus, FocusBuilder};
 use std::collections::HashSet;
 
 use super::field::{FormFieldType, SlotKind, ValidationIssue};
+use super::widgets::{
+    flags, BooleanWidget, NotesWidget, PasswordRule, PasswordWidget, PlaintextWidget, SshKeyWidget,
+    TotpSecretWidget,
+};
 use super::EntryForm;
-
-/// `true` when the PEM armor is both opened and closed.
-///
-/// Only a closed armor is a complete input; anything shorter is still being
-/// typed or pasted and must not be judged yet.
-fn has_complete_armor(value: &str) -> bool {
-    value.contains("-----BEGIN") && value.contains("-----END")
-}
 
 impl EntryForm {
     /// Re-run validation and update `validation_errors`.
@@ -57,44 +51,45 @@ impl EntryForm {
             }
         }
 
-        // Value-format rules. Cheap rules run on every event; a complete-input
-        // rule (SSH armor) waits until the armor is closed or the slot is left,
-        // so mid-typing never flags half a key.
+        // Value-format rules: each row's field type names the widget that owns
+        // its rule and timing. The arms are exhaustive on purpose — a new
+        // `FormFieldType` variant does not compile until it names a widget —
+        // and the loop only supplies the focus context.
         let focused_slot = self.focused_slot();
         let mut value_issues: Vec<ValidationIssue> = Vec::new();
         for (i, f) in self.fields.iter().enumerate() {
             let value = self.field_value_text(f);
-            if value.is_empty() {
-                continue;
-            }
             let slot_focused = matches!(focused_slot, SlotKind::Value(j) if j == i);
-            match f.field_type {
-                FormFieldType::SshKey => {
-                    let incomplete_while_typing = slot_focused && !has_complete_armor(&value);
-                    if !incomplete_while_typing && Self::ssh_key_parse_error(&value).is_some() {
-                        value_issues.push(ValidationIssue::InvalidSshKey(i));
-                    }
+            let (flags_here, issue) = match f.field_type {
+                FormFieldType::SshKey => (
+                    flags(&SshKeyWidget, &value, slot_focused),
+                    Some(ValidationIssue::InvalidSshKey(i)),
+                ),
+                FormFieldType::Totp => (
+                    flags(&TotpSecretWidget, &value, slot_focused),
+                    Some(ValidationIssue::InvalidTotp(i)),
+                ),
+                FormFieldType::Token => (
+                    flags(
+                        &PasswordWidget {
+                            rule: PasswordRule::Advisory,
+                        },
+                        &value,
+                        slot_focused,
+                    ),
+                    None,
+                ),
+                FormFieldType::Username | FormFieldType::Text | FormFieldType::SshPublicKey => {
+                    (flags(&PlaintextWidget, &value, slot_focused), None)
                 }
-                FormFieldType::Totp if !Self::totp_secret_is_valid(&value) => {
-                    value_issues.push(ValidationIssue::InvalidTotp(i));
-                }
-                _ => {}
+                FormFieldType::Notes => (flags(&NotesWidget, &value, slot_focused), None),
+                FormFieldType::Boolean => (flags(&BooleanWidget, &value, slot_focused), None),
+            };
+            if flags_here {
+                value_issues.extend(issue);
             }
         }
         self.validation_errors.extend(value_issues);
-    }
-
-    /// Parse error for an SshKey value, or `None` when it parses.
-    ///
-    /// The form door and the realtime rule share this one predicate so they
-    /// can never disagree about what a valid key is.
-    pub(super) fn ssh_key_parse_error(value: &str) -> Option<String> {
-        SshKeyMaterial::validate(value).err().map(|e| e.to_string())
-    }
-
-    /// `true` when a TOTP secret decodes as base32.
-    pub(super) fn totp_secret_is_valid(value: &str) -> bool {
-        decode_secret(value).is_ok()
     }
 
     /// Whether the form has any validation errors.

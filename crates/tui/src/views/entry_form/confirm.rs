@@ -1,10 +1,11 @@
 //! Confirmation: build the domain `Entry` from the form state.
 
-use bogita_core::domain::{Entry, EntryType, Field, FieldType, FieldValue, AGENT_SERVABLE_KEY};
+use bogita_core::domain::{Entry, Field, FieldType, FieldValue, AGENT_SERVABLE_KEY};
 use chrono::Utc;
 use uuid::Uuid;
 
 use super::field::{FormAction, FormFieldType, ValidationIssue};
+use super::widgets::{FieldWidget, SshKeyWidget};
 use super::EntryForm;
 
 /// Snapshot of the original entry for dirty-state tracking.
@@ -83,7 +84,7 @@ impl EntryForm {
             // An SshKey row is the form door for free-text private keys: the
             // value must parse as an OpenSSH PEM before the Entry is built.
             if ff.field_type == FormFieldType::SshKey {
-                if let Some(e) = Self::ssh_key_parse_error(value.as_str()) {
+                if let Err(e) = SshKeyWidget.validate_value(value.as_str()) {
                     return FormAction::ValidationError(format!(
                         "Field {}: private key is not a valid OpenSSH private key ({e})",
                         i + 1
@@ -91,7 +92,15 @@ impl EntryForm {
                 }
             }
             let key = ff.key_state.text().to_string();
-            let field_type = ff.field_type.to_domain_field_type(&key);
+            // CHOICE > TABLE > NEVER GUESS. A row the user picked a type for saves
+            // as that arm; an untouched row still wearing the collapsed `Text`
+            // shape falls back to the key table, the only place its authored type
+            // survives that collapse. Nothing is ever inferred from the value.
+            let field_type = if self.row_is_untouched(i, ff) {
+                FormFieldType::legacy_field_type(&key)
+            } else {
+                ff.field_type.to_domain_field_type(&key)
+            };
             domain_fields.push(Field {
                 id: Uuid::new_v4(),
                 key,
@@ -106,7 +115,7 @@ impl EntryForm {
             id: self.entry_id,
             vault_id: self.vault_id,
             name: self.name_state.text().trim().to_string(),
-            entry_type: EntryType::Token,
+            entry_type: self.entry_type.clone(),
             created_at: now,
             modified_at: now,
             fields: domain_fields,

@@ -316,7 +316,7 @@ fn k_on_type_slot_wraps_to_last_variant() {
     add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot (cursor=0)
     open_dropdown(&mut form);
-    form.handle_key(KeyCode::Char('k')); // wraps to 6=Boolean
+    form.handle_key(KeyCode::Char('k')); // wraps to 7=Boolean
     form.handle_key(KeyCode::Enter); // confirm
     assert_eq!(form.field_badge(0), "boolean");
 }
@@ -350,8 +350,8 @@ fn type_selector_wraps_at_bottom() {
     add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot (cursor=0)
     open_dropdown(&mut form);
-    // Navigate past last item (6) → wraps to 0
-    for _ in 0..7 {
+    // Navigate past last item (7) → wraps to 0
+    for _ in 0..8 {
         form.handle_key(KeyCode::Char('j'));
     }
     form.handle_key(KeyCode::Enter); // confirm

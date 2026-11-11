@@ -20,10 +20,10 @@ async fn esc_dirty_edit_form_then_s_saves() -> Result<()> {
 
     // -- Exec: dirty Esc reaches the save/discard modal, then [s] saves
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[s/Enter] save") && hint.contains("[d] discard"),
-        "dirty Esc on an edit form must offer save and discard, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmSave,
+        "dirty Esc on an edit form must offer save and discard"
     );
     tui.handle_key_with_modifiers(KeyCode::Char('s'), KeyModifiers::NONE);
     tui.flush_pending().await?;
@@ -63,9 +63,10 @@ async fn b_in_save_modal_returns_to_form() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('b'), KeyModifiers::NONE);
 
     let hint = tui.status_hint();
-    assert!(
-        hint.contains("Editing name") && !hint.contains("[s/Enter] save"),
-        "[b] in the save modal must return to the form with edits intact, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormName,
+        "[b] in the save modal must return to the form with edits intact, footer was: {hint}"
     );
     Ok(())
 }
@@ -83,9 +84,10 @@ async fn esc_dirty_add_form_still_shows_discard_modal() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Esc, KeyModifiers::NONE);
 
     let hint = tui.status_hint();
-    assert!(
-        hint.contains("[d] discard") && !hint.contains("[s/Enter] save"),
-        "a dirty add form must keep the discard-only warning, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmDiscard,
+        "a dirty add form must keep the discard-only warning, footer was: {hint}"
     );
     Ok(())
 }
@@ -104,9 +106,10 @@ async fn d_in_add_discard_modal_discards() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('d'), KeyModifiers::NONE);
 
     let hint = tui.status_hint();
-    assert!(
-        !hint.contains("discard") && !hint.contains("Editing name"),
-        "[d] in the add-mode discard modal must return to the main view, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::MainEntries,
+        "[d] in the add-mode discard modal must return to the main view, footer was: {hint}"
     );
     Ok(())
 }

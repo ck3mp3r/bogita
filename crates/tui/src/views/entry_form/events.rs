@@ -1,7 +1,7 @@
 //! Key routing and structural field edits for the entry form.
 
 use rat_event::{HandleEvent, Outcome, Regular};
-use rat_widget::event::ChoiceOutcome;
+use rat_widget::text_input::TextInputState;
 use rat_widget::textarea::TextAreaState;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
@@ -75,7 +75,7 @@ impl EntryForm {
     /// A dirty add form warns before throwing away what the user typed. An edit
     /// form never discards on Esc: `Cancel` reaches the caller, which opens the
     /// save/discard modal so the user still gets a save choice.
-    fn esc_action(&self) -> FormAction {
+    pub(super) fn esc_action(&self) -> FormAction {
         if self.mode() == FormMode::Add && self.is_dirty() {
             FormAction::ConfirmDiscard
         } else {
@@ -125,6 +125,10 @@ impl EntryForm {
                                 }
                             }
                         }
+                        return Outcome::Changed;
+                    }
+                    KeyCode::Char('x') => {
+                        self.cut_focused_slot();
                         return Outcome::Changed;
                     }
                     KeyCode::Char('t') => {
@@ -198,6 +202,39 @@ impl EntryForm {
     }
 
     /// Handle events when focused on the name slot.
+    /// Alt-x: select the whole focused slot and cut it into the widget's own
+    /// buffer, so that slot's `Ctrl-v` puts it back. The type slot is not a text
+    /// cell, so it is left alone.
+    fn cut_focused_slot(&mut self) {
+        if self.name_state.focus.get() {
+            cut_input(&mut self.name_state);
+            return;
+        }
+        for f in &mut self.fields {
+            if f.key_state.focus.get() {
+                cut_input(&mut f.key_state);
+                return;
+            }
+            if f.field_type == FormFieldType::Notes {
+                if let Some(state) = f.textarea_state.as_mut() {
+                    if state.focus.get() {
+                        if !state.text().is_empty() {
+                            state.select_all();
+                            let _ = state.cut_to_clip();
+                        }
+                        return;
+                    }
+                }
+            } else if f.value_state.focus.get() {
+                cut_input(&mut f.value_state);
+                return;
+            }
+            if f.type_state.focus.get() {
+                return;
+            }
+        }
+    }
+
     fn handle_name_event(&mut self, event: &Event) -> Outcome {
         if let Event::Key(ke) = event {
             if ke.kind == KeyEventKind::Press {
@@ -216,124 +253,6 @@ impl EntryForm {
             }
         }
         self.name_state.handle(event, Regular).into()
-    }
-
-    /// Handle events when focused on a type slot.
-    ///
-    /// 1. Popup open → delegate ALL events to ChoiceState, then sync field_type
-    ///    after popup closes. Return early.
-    /// 2. Popup closed → intercept form-level keys (Esc=cancel, Enter=open popup).
-    ///    Return early on match.
-    /// 3. Popup closed → handle j/k/Up/Down with wrapping (ChoiceState treats j/k
-    ///    as character search, so we handle them ourselves). Return early on match.
-    /// 4. Popup closed → swallow everything else: Space and printable chars must
-    ///    not reach `ChoiceState::select_by_char`.
-    fn handle_type_event(&mut self, event: &Event, idx: usize) -> Outcome {
-        // 1. If popup is open, handle navigation and delegation
-        if idx < self.fields.len() && self.fields[idx].type_state.is_popup_active() {
-            // Intercept j/k/Up/Down for navigation (ChoiceState treats j/k as char search)
-            if let Event::Key(ke) = event {
-                if ke.kind == KeyEventKind::Press {
-                    let count = FormFieldType::count();
-                    match ke.code {
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            if let Some(f) = self.fields.get_mut(idx) {
-                                let cur = f.type_state.value();
-                                let next = (cur + 1) % count;
-                                f.type_state.set_value(next);
-                            }
-                            return Outcome::Changed;
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            if let Some(f) = self.fields.get_mut(idx) {
-                                let cur = f.type_state.value();
-                                let prev = if cur == 0 { count - 1 } else { cur - 1 };
-                                f.type_state.set_value(prev);
-                            }
-                            return Outcome::Changed;
-                        }
-                        KeyCode::Esc => {
-                            // Esc closes popup without applying selection
-                            if let Some(f) = self.fields.get_mut(idx) {
-                                f.type_state.set_popup_active(false);
-                            }
-                            return Outcome::Changed;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            // Delegate remaining events to ChoiceState (Enter closes popup, etc.)
-            if let Some(f) = self.fields.get_mut(idx) {
-                let _: ChoiceOutcome = f.type_state.handle(event, Regular);
-                if !f.type_state.is_popup_active() {
-                    let selected = f.type_state.value();
-                    if let Some(new_type) = FormFieldType::from_index(selected) {
-                        f.field_type = new_type;
-                        self.ensure_textarea(idx);
-                    }
-                }
-            }
-            return Outcome::Changed;
-        }
-
-        // 2. Popup closed — intercept form-level keys
-        if let Event::Key(ke) = event {
-            if ke.kind == KeyEventKind::Press {
-                match ke.code {
-                    KeyCode::Esc => {
-                        self.pending_action = self.esc_action();
-                        self.revealed_secret_fields.clear();
-                        return Outcome::Changed;
-                    }
-                    // The type selector is a picker, not a text cell: Enter opens it.
-                    KeyCode::Enter => {
-                        if let Some(f) = self.fields.get_mut(idx) {
-                            f.type_state.set_popup_active(true);
-                        }
-                        return Outcome::Changed;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // 3. Handle j/k/Up/Down with wrapping
-        if let Event::Key(ke) = event {
-            if ke.kind == KeyEventKind::Press {
-                let count = FormFieldType::count();
-                match ke.code {
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        if let Some(f) = self.fields.get_mut(idx) {
-                            let cur = f.type_state.value();
-                            let next = (cur + 1) % count;
-                            f.type_state.set_value(next);
-                            if let Some(new_type) = FormFieldType::from_index(next) {
-                                f.field_type = new_type;
-                            }
-                            self.ensure_textarea(idx);
-                        }
-                        return Outcome::Changed;
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        if let Some(f) = self.fields.get_mut(idx) {
-                            let cur = f.type_state.value();
-                            let prev = if cur == 0 { count - 1 } else { cur - 1 };
-                            f.type_state.set_value(prev);
-                            if let Some(new_type) = FormFieldType::from_index(prev) {
-                                f.field_type = new_type;
-                            }
-                            self.ensure_textarea(idx);
-                        }
-                        return Outcome::Changed;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // 4. Popup closed — Space and printable chars type nothing on this cell.
-        Outcome::Changed
     }
 
     /// Handle events when focused on a key or value text slot.
@@ -447,7 +366,7 @@ impl EntryForm {
 
     /// Ensure the TextAreaState for a Notes field is initialised (or cleaned up
     /// when the type changes away from Notes). Called after a type change.
-    fn ensure_textarea(&mut self, field_idx: usize) {
+    pub(super) fn ensure_textarea(&mut self, field_idx: usize) {
         if let Some(f) = self.fields.get_mut(field_idx) {
             if f.field_type == FormFieldType::Notes {
                 if f.textarea_state.is_none() {
@@ -495,4 +414,22 @@ impl HandleEvent<Event, Regular, Outcome> for EntryForm {
     fn handle(&mut self, event: &Event, _data: Regular) -> Outcome {
         self.handle_event_inner(event)
     }
+}
+
+// ── Support ────────────────────────────────────────────────────────────────
+
+/// Select everything in one input and cut it into the widget's own buffer.
+///
+/// The widget refuses to cut a password-masked slot; the user asked for this
+/// slot, so the guard is dropped for the operation and restored before the next
+/// render decides the masking again.
+fn cut_input(state: &mut TextInputState) {
+    if state.text().is_empty() {
+        return;
+    }
+    let was_passwd = state.passwd;
+    state.passwd = false;
+    let _ = state.select_all();
+    let _ = state.cut_to_clip();
+    state.passwd = was_passwd;
 }

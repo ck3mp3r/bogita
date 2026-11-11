@@ -1,8 +1,9 @@
 //! Frame rendering — layout, view dispatch, and status chrome.
 
 use super::bindings;
+use super::help;
 use super::modals::{
-    centered_rect, render_confirm_delete_modal, render_confirm_delete_vault_modal,
+    centered_rect, form_modal_rect, render_confirm_delete_modal, render_confirm_delete_vault_modal,
     render_confirm_discard_modal, render_confirm_save_modal, render_error_modal,
     render_form_vault_picker, render_lock_screen,
 };
@@ -11,7 +12,9 @@ use bogita_core::ports::{IdentityStore, KeychainStore, VaultStorageFactory};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::Frame;
 use std::time::Duration;
 
@@ -70,16 +73,16 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         // Render main view detail pane behind the overlay.
                         self.main_view
                             .render_detail(frame, col3, self.detail_entry.as_ref());
-                        // Render form as centered overlay on top.
-                        let overlay = centered_rect(80, 90, body_area);
+                        // Render form as a content-sized overlay on top.
+                        let overlay = form_modal_rect(body_area, f.field_count());
                         f.render(frame, overlay);
                     }
                     ActiveView::FormVaultPicker { form, vault_state } => {
                         // Render main view detail pane behind the overlay.
                         self.main_view
                             .render_detail(frame, col3, self.detail_entry.as_ref());
-                        // Render form as centered overlay.
-                        let overlay = centered_rect(80, 90, body_area);
+                        // Render form as a content-sized overlay.
+                        let overlay = form_modal_rect(body_area, form.field_count());
                         form.render(frame, overlay);
                         // Render vault picker on top.
                         let vaults = self.main_view.vaults_snapshot();
@@ -90,8 +93,8 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         // Render main view detail pane behind the overlay.
                         self.main_view
                             .render_detail(frame, col3, self.detail_entry.as_ref());
-                        // Render form as centered overlay, then confirm modal on top.
-                        let overlay = centered_rect(80, 90, body_area);
+                        // Render form as a content-sized overlay, then confirm modal on top.
+                        let overlay = form_modal_rect(body_area, form.field_count());
                         form.render(frame, overlay);
                         render_confirm_save_modal(frame, body_area, &name);
                     }
@@ -99,8 +102,8 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         // Render main view detail pane behind the overlay.
                         self.main_view
                             .render_detail(frame, col3, self.detail_entry.as_ref());
-                        // Render form as centered overlay, then discard confirm modal on top.
-                        let overlay = centered_rect(80, 90, body_area);
+                        // Render form as a content-sized overlay, then discard confirm modal on top.
+                        let overlay = form_modal_rect(body_area, form.field_count());
                         form.render(frame, overlay);
                         render_confirm_discard_modal(frame, body_area);
                     }
@@ -113,8 +116,8 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
                         // Render main view detail pane behind the overlay.
                         self.main_view
                             .render_detail(frame, col3, self.detail_entry.as_ref());
-                        // Render form as centered overlay, then gen popup on top.
-                        let overlay = centered_rect(80, 90, body_area);
+                        // Render form as a content-sized overlay, then gen popup on top.
+                        let overlay = form_modal_rect(body_area, form.field_count());
                         form.render(frame, overlay);
                         gen.render(frame, body_area);
                     }
@@ -137,13 +140,14 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
             }
         }
 
-        // Error overlay: rendered on top of everything else.
-        if let Some(msg) = &self.error_message.clone() {
-            render_error_modal(frame, body_area, msg);
-        }
-
         if self.help.is_some() {
             self.render_help_overlay(frame, body_area);
+        }
+
+        // Error overlay: rendered last so an error always wins over the help
+        // overlay — the caller must see why the action failed.
+        if let Some(msg) = &self.error_message.clone() {
+            render_error_modal(frame, body_area, msg);
         }
 
         // Status bar — show active status message or context hint
@@ -171,103 +175,69 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         );
     }
 
-    /// One-line status bar hint text, generated from the binding tables.
+    /// The status bar's idle text — one bindings-sourced row, the same on every
+    /// surface. The full key inventory lives behind `?`; advertising chords here
+    /// is what made the bar drift.
     pub fn status_hint(&self) -> String {
+        bindings::footer()
+    }
+
+    /// The surface that currently owns the keys — the one the `?` overlay
+    /// highlights first. The overlay itself renders the whole registry, so this
+    /// names the focus, not the extent, of the inventory.
+    pub(crate) fn surface(&self) -> bindings::Surface {
         use bindings::Surface;
         if self.error_message.is_some() {
-            return bindings::surface_hint(Surface::ErrorOverlay);
-        }
-        if self.help.is_some() {
-            return bindings::titled(bindings::title(Surface::Help), bindings::HELP);
+            return Surface::ErrorOverlay;
         }
         match &self.active {
-            ActiveView::ConfirmDelete { .. } | ActiveView::ConfirmDeleteVault { .. } => {
-                bindings::surface_hint(Surface::ConfirmDelete)
-            }
-            ActiveView::ConfirmSave { .. } => bindings::surface_hint(Surface::ConfirmSave),
-            ActiveView::ConfirmDiscard { .. } => bindings::surface_hint(Surface::ConfirmDiscard),
-            ActiveView::Form(f) => {
-                let hint = bindings::form_hint(
-                    &f.focused_slot(),
-                    f.focused_field(),
-                    f.field_count(),
-                    f.field_badge((f.focused_field().saturating_sub(1)) / 3),
-                    f.focused_field_is_obscured(),
-                );
-                let dirty_suffix = if f.is_dirty() {
-                    "  ·  unsaved changes"
-                } else {
-                    ""
-                };
-                let validation_warning = if f.has_validation_errors() {
-                    format!("  ⚠ {}", f.validation_error_summary())
-                } else {
-                    String::new()
-                };
-                format!("{hint}{dirty_suffix}{validation_warning}")
-            }
             ActiveView::Main => {
-                if self.main_view.is_vault_picker_open() {
-                    return bindings::surface_hint(Surface::MainVaultPicker);
-                }
-                if self.main_view.is_leader_mode() {
-                    use crate::views::main_view::Column;
-                    return match self.main_view.focused {
-                        Column::Entries => bindings::surface_hint(Surface::MainLeaderEntries),
-                        Column::Detail => bindings::surface_hint(Surface::MainLeaderDetail),
-                    };
-                }
-                if self.main_view.is_searching() {
-                    return bindings::surface_hint(Surface::Search);
-                }
                 use crate::views::main_view::Column;
-                if self.main_view.focused == Column::Detail {
-                    bindings::surface_hint(Surface::MainDetail)
+                if self.main_view.is_vault_picker_open() {
+                    Surface::MainVaultPicker
+                } else if self.main_view.is_leader_mode() {
+                    match self.main_view.focused {
+                        Column::Entries => Surface::MainLeaderEntries,
+                        Column::Detail => Surface::MainLeaderDetail,
+                    }
+                } else if self.main_view.is_searching() {
+                    Surface::Search
+                } else if self.main_view.focused == Column::Detail {
+                    Surface::MainDetail
                 } else {
-                    bindings::surface_hint(Surface::MainEntries)
+                    Surface::MainEntries
                 }
             }
-            ActiveView::PasswordGen { .. } => bindings::surface_hint(Surface::PasswordGen),
-            ActiveView::FormVaultPicker { .. } => bindings::surface_hint(Surface::FormVaultPicker),
-            ActiveView::VaultForm(f) => bindings::vault_form_hint(f.is_name_focused()),
-            ActiveView::Locked { error, .. } => bindings::locked_hint(error.is_some()),
-        }
-    }
-
-    /// The surface whose keys the help overlay should list.
-    ///
-    /// `None` means the whole registry — the Main view has no single table.
-    fn help_surface(&self) -> Option<bindings::Surface> {
-        use bindings::Surface;
-        match &self.active {
-            ActiveView::Main => None,
-            ActiveView::ConfirmSave { .. } => Some(Surface::ConfirmSave),
-            ActiveView::ConfirmDiscard { .. } => Some(Surface::ConfirmDiscard),
+            ActiveView::ConfirmSave { .. } => Surface::ConfirmSave,
+            ActiveView::ConfirmDiscard { .. } => Surface::ConfirmDiscard,
             ActiveView::ConfirmDelete { .. } | ActiveView::ConfirmDeleteVault { .. } => {
-                Some(Surface::ConfirmDelete)
+                Surface::ConfirmDelete
             }
-            ActiveView::Form(f) => Some(bindings::form_surface(
-                &f.focused_slot(),
-                f.focused_field_is_obscured(),
-            )),
-            ActiveView::PasswordGen { .. } => Some(Surface::PasswordGen),
-            ActiveView::FormVaultPicker { .. } => Some(Surface::FormVaultPicker),
-            ActiveView::VaultForm(f) => Some(if f.is_name_focused() {
-                Surface::VaultFormName
-            } else {
-                Surface::VaultFormCheckbox
-            }),
-            ActiveView::Locked { error, .. } => Some(if error.is_some() {
-                Surface::LockedError
-            } else {
-                Surface::Locked
-            }),
+            ActiveView::Form(f) => {
+                bindings::form_surface(&f.focused_slot(), f.focused_field_is_obscured())
+            }
+            ActiveView::PasswordGen { .. } => Surface::PasswordGen,
+            ActiveView::FormVaultPicker { .. } => Surface::FormVaultPicker,
+            ActiveView::VaultForm(f) => {
+                if f.is_name_focused() {
+                    Surface::VaultFormName
+                } else {
+                    Surface::VaultFormCheckbox
+                }
+            }
+            ActiveView::Locked { error, .. } => {
+                if error.is_some() {
+                    Surface::LockedError
+                } else {
+                    Surface::Locked
+                }
+            }
         }
     }
 
-    /// The `?` keybindings overlay: every key of the focused surface, or the
-    /// whole registry on Main. `j`/`k` scroll; `?`/Esc/`q` close.
-    fn render_help_overlay(&self, frame: &mut Frame, area: Rect) {
+    /// The `?` keybindings overlay: every registry chord, described, in
+    /// sections. `j`/`k` scroll; `?`/Esc/`q` close.
+    fn render_help_overlay(&mut self, frame: &mut Frame, area: Rect) {
         let modal = centered_rect(80, 80, area);
         frame.render_widget(Clear, modal);
         let block = Block::default()
@@ -278,27 +248,58 @@ impl<K: KeychainStore, F: VaultStorageFactory, I: IdentityStore> Tui<K, F, I> {
         let inner = block.inner(modal);
         frame.render_widget(block, modal);
 
-        let sections = match self.help_surface() {
-            Some(surface) => vec![(bindings::title(surface), bindings::table(surface))],
-            None => bindings::registry(),
-        };
-        let mut lines: Vec<Line> = Vec::new();
-        for (title, table) in sections {
-            lines.push(Line::from(Span::styled(
-                title.to_string(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(format!("  {}", bindings::hint(table))));
-        }
+        let rows = bindings::help_rows(self.surface());
+        let content = help::layout(&rows, inner.width);
+        let content_len = content.len();
+        // The scroll bounds are state, not locals: the key handler owns the
+        // grammar and needs the same two numbers this frame is clamped by.
+        self.help_viewport = inner.height;
+        self.help_max_scroll = help::max_scroll(content_len, inner.height);
+        let scroll = self.help.unwrap_or(0).min(self.help_max_scroll);
+        let lines: Vec<Line> = content
+            .into_iter()
+            .map(|line| match line {
+                help::HelpLine::Header { title, focused } => {
+                    let style = if focused {
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    Line::from(Span::styled(title, style))
+                }
+                help::HelpLine::Row(text) => Line::from(text),
+                help::HelpLine::Spacer => Line::from(""),
+            })
+            .collect();
 
-        frame.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .scroll((self.help.unwrap_or(0), 0)),
-            inner,
-        );
+        frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner);
+
+        // A scrollbar only when there is something below the fold: it is the
+        // position cue in a modal that has no other chrome for it.
+        //
+        // `content_length` counts scroll STATES (max offset + 1), not content
+        // lines: the widget places the thumb at position / (content_length - 1)
+        // and sizes it by viewport / (content_length - 1), so feeding raw lines
+        // left the thumb short of the end by about one viewport. No arrow heads
+        // and no inset: the track is the full inner height, so the thumb touches
+        // both edges.
+        let max_scroll = help::max_scroll(content_len, inner.height);
+        if max_scroll > 0 {
+            let mut bar_state = ScrollbarState::new(max_scroll as usize + 1)
+                .position(scroll as usize)
+                .viewport_content_length(inner.height as usize);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None),
+                inner,
+                &mut bar_state,
+            );
+        }
     }
 
     /// One-line header text: app name · entry count.

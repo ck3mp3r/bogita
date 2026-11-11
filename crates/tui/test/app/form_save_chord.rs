@@ -27,10 +27,10 @@ async fn alt_s_in_edit_form_shows_save_modal_and_saves() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('s'), KeyModifiers::ALT);
 
     // -- Check: the save modal opens, and [s] persists the edit
-    let hint = tui.status_hint();
-    assert!(
-        hint.contains("[s/Enter] save"),
-        "Alt-s from the type slot should open the save modal, got: {hint}"
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::ConfirmSave,
+        "Alt-s from the type slot should open the save modal"
     );
     tui.handle_key_with_modifiers(KeyCode::Char('s'), KeyModifiers::NONE);
     tui.flush_pending().await?;
@@ -69,10 +69,14 @@ async fn status_hint_on_key_slot_advertises_enter_save() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('a'), KeyModifiers::NONE);
     tui.handle_key_with_modifiers(KeyCode::Char('n'), KeyModifiers::ALT); // → key slot
 
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormKey,
+        "the key slot owns the keys"
+    );
     assert!(
-        hint.contains("[Enter] save"),
-        "the key slot hint must advertise save, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::FORM_KEY).contains("[Enter] save"),
+        "the key slot's inventory must advertise save"
     );
     Ok(())
 }
@@ -87,10 +91,14 @@ async fn status_hint_on_value_slot_advertises_enter_save() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → type slot
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → value slot
 
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormValue,
+        "the value slot owns the keys"
+    );
     assert!(
-        hint.contains("[Enter] save"),
-        "the value slot hint must advertise save, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::FORM_VALUE).contains("[Enter] save"),
+        "the value slot's inventory must advertise save"
     );
     Ok(())
 }
@@ -109,10 +117,14 @@ async fn status_hint_on_token_slot_advertises_enter_save() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Enter, KeyModifiers::NONE); // apply
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → token slot
 
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormToken,
+        "the token slot owns the keys"
+    );
     assert!(
-        hint.contains("[Enter] save"),
-        "the token slot hint must advertise save, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::FORM_TOKEN).contains("[Enter] save"),
+        "the token slot's inventory must advertise save"
     );
     Ok(())
 }
@@ -126,10 +138,14 @@ async fn status_hint_on_type_slot_advertises_alt_s_save() -> Result<()> {
     tui.handle_key_with_modifiers(KeyCode::Char('n'), KeyModifiers::ALT); // → key slot
     tui.handle_key_with_modifiers(KeyCode::Tab, KeyModifiers::NONE); // → type slot
 
-    let hint = tui.status_hint();
+    assert_eq!(
+        tui.surface(),
+        crate::app::bindings::Surface::FormType,
+        "the type slot owns the keys"
+    );
     assert!(
-        hint.contains("[Alt-s] save"),
-        "the type slot hint must advertise Alt-s save, got: {hint}"
+        crate::app::bindings::hint(crate::app::bindings::FORM_TYPE_TAIL).contains("[Alt-s] save"),
+        "the type slot's inventory must advertise Alt-s save"
     );
     Ok(())
 }

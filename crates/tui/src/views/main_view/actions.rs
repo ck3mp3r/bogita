@@ -52,4 +52,9 @@ impl Column {
             Column::Detail => Column::Entries,
         }
     }
+
+    /// The other pane — what `h` and `l` step to.
+    pub(super) fn prev(&self) -> Self {
+        self.next()
+    }
 }

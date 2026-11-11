@@ -3,40 +3,51 @@ use std::sync::Mutex;
 use crate::error::{CryptoError, Result};
 use crate::ports::KeychainStore;
 
-/// Keychain adapter using the `keyring` crate.
-/// Service name is "bogita" (or "bogita-dev" in debug builds).
+/// Service name of the OS keychain entry: `bogita` in release builds,
+/// `bogita-dev` in debug builds — the compile-time external-state gate.
+pub fn keychain_service() -> &'static str {
+    #[cfg(debug_assertions)]
+    let service = "bogita-dev";
+    #[cfg(not(debug_assertions))]
+    let service = "bogita";
+    service
+}
+
+/// Account name of the OS keychain entry.
+pub const KEYCHAIN_USER: &str = "age-identity";
+
+/// Keychain adapter over the `keyring` crate.
+///
+/// The adapter owns no service/user knowledge: the [`keyring::Entry`] is built
+/// by the composition root — production via [`platform_adapter`], tests via
+/// [`KeychainAdapter::from_entry`] over a keyring-core mock credential — so the
+/// environment is the only thing that differs between the two.
 pub struct KeychainAdapter {
-    service: String,
     entry: Mutex<Option<keyring::Entry>>,
 }
 
 impl KeychainAdapter {
-    pub fn new() -> Self {
-        #[cfg(debug_assertions)]
-        let service = "bogita-dev";
-        #[cfg(not(debug_assertions))]
-        let service = "bogita";
+    /// Build the adapter over an already-resolved keychain entry.
+    pub fn from_entry(entry: keyring::Entry) -> Self {
         Self {
-            service: service.to_string(),
-            entry: Mutex::new(None),
+            entry: Mutex::new(Some(entry)),
         }
     }
 
     fn entry(&self) -> Result<std::sync::MutexGuard<'_, Option<keyring::Entry>>> {
-        let mut guard = self.entry.lock().expect("KeychainAdapter mutex poisoned");
-        if guard.is_none() {
-            let e = keyring::Entry::new(&self.service, "age-identity")
-                .map_err(|e| CryptoError::KeychainError(e.to_string()))?;
-            *guard = Some(e);
-        }
-        Ok(guard)
+        Ok(self.entry.lock().expect("KeychainAdapter mutex poisoned"))
     }
 }
 
-impl Default for KeychainAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Build the production adapter over the platform credential store.
+///
+/// The single production construction seam: it resolves the platform keychain
+/// entry once, so every caller (app init, ssh helpers) shares one construction
+/// path and one set of service/user literals.
+pub fn platform_adapter() -> Result<KeychainAdapter> {
+    let entry = keyring::Entry::new(keychain_service(), KEYCHAIN_USER)
+        .map_err(|e| CryptoError::KeychainError(e.to_string()))?;
+    Ok(KeychainAdapter::from_entry(entry))
 }
 
 impl KeychainStore for KeychainAdapter {

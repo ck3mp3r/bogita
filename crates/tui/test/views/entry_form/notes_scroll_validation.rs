@@ -65,8 +65,8 @@ fn notes_type_produces_text_field_value() {
     add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
-    // Navigate to Notes (index 5): j=Username, j=Token, j=Totp, j=SshKey, j=Notes
-    for _ in 0..5 {
+    // Navigate to Notes (index 6): j=Username, j=Token, j=Totp, j=SshKey, j=SshPublic, j=Notes
+    for _ in 0..6 {
         form.handle_key(KeyCode::Char('j'));
     }
     form.handle_key(KeyCode::Enter); // confirm selection
@@ -90,8 +90,8 @@ fn notes_field_enter_inserts_newline_not_confirm() {
     add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
-    // Navigate to Notes (index 5)
-    for _ in 0..5 {
+    // Navigate to Notes (index 6)
+    for _ in 0..6 {
         form.handle_key(KeyCode::Char('j'));
     }
     form.handle_key(KeyCode::Enter); // confirm selection
@@ -125,8 +125,8 @@ fn notes_field_esc_cancels_form() {
     add_field(&mut form);
     form.handle_key(KeyCode::Tab); // → type slot
     open_dropdown(&mut form);
-    // Navigate to Notes (index 5)
-    for _ in 0..5 {
+    // Navigate to Notes (index 6)
+    for _ in 0..6 {
         form.handle_key(KeyCode::Char('j'));
     }
     form.handle_key(KeyCode::Enter); // confirm selection

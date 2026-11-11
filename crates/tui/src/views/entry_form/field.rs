@@ -43,7 +43,9 @@ pub enum ValidationIssue {
 /// This is NOT the same as domain `FieldType`; it maps to domain types on confirm.
 ///
 /// `TABLE` is the single source of truth: dropdown order, display label and the
-/// obscured/encrypted flag all derive from it.
+/// obscured/encrypted flag all derive from it. The two ssh arms are separate on
+/// purpose — one row holds private material, the other a public line, and the
+/// user picks which one the row is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormFieldType {
     Text,
@@ -51,18 +53,20 @@ pub enum FormFieldType {
     Token,
     Totp,
     SshKey,
+    SshPublicKey,
     Notes,
     Boolean,
 }
 
 impl FormFieldType {
     /// Dropdown order, display label, and whether the value is obscured/encrypted.
-    pub(super) const TABLE: [(Self, &'static str, bool); 7] = [
+    pub(super) const TABLE: [(Self, &'static str, bool); 8] = [
         (Self::Text, "text", false),
         (Self::Username, "username", false),
         (Self::Token, "token", true),
         (Self::Totp, "totp", true),
         (Self::SshKey, "ssh-key", true),
+        (Self::SshPublicKey, "ssh-public", false),
         (Self::Notes, "notes", false),
         (Self::Boolean, "boolean", false),
     ];
@@ -114,6 +118,7 @@ impl FormFieldType {
             FieldType::Token => Self::Token,
             FieldType::TotpSecret => Self::Totp,
             FieldType::SshPrivateKey => Self::SshKey,
+            FieldType::SshPublicKey => Self::SshPublicKey,
             FieldType::Notes => Self::Notes,
             FieldType::Boolean => Self::Boolean,
             FieldType::Custom(name) if name == AGENT_SERVABLE_KEY => Self::Boolean,
@@ -133,7 +138,10 @@ impl FormFieldType {
         }
     }
 
-    /// Map to the domain `FieldType` for this form type (key used for Custom).
+    /// Map to the domain `FieldType` for the arm the row shows.
+    ///
+    /// The arm is the user's choice when they picked one, and the load shape
+    /// otherwise; either way this mapping never reads the value.
     pub(super) fn to_domain_field_type(&self, key: &str) -> FieldType {
         match self {
             Self::Text => FieldType::Custom(key.to_string()),
@@ -141,8 +149,23 @@ impl FormFieldType {
             Self::Token => FieldType::Token,
             Self::Totp => FieldType::TotpSecret,
             Self::SshKey => FieldType::SshPrivateKey,
+            Self::SshPublicKey => FieldType::SshPublicKey,
             Self::Notes => FieldType::Notes,
             Self::Boolean => FieldType::Boolean,
+        }
+    }
+
+    /// The legacy key table: the domain type a row had before the form collapsed
+    /// it to `Text` on load.
+    ///
+    /// Only untouched rows may use it — it restores an authored shape and never
+    /// overrides a choice the user made.
+    pub(super) fn legacy_field_type(key: &str) -> FieldType {
+        match key {
+            "public_key" => FieldType::SshPublicKey,
+            "key_type" => FieldType::SshKeyType,
+            "comment" => FieldType::SshComment,
+            other => FieldType::Custom(other.to_string()),
         }
     }
 
@@ -176,6 +199,10 @@ pub(super) struct FormField {
     /// stored `Custom("agent_servable")` field type is lost in `from_domain`,
     /// so the row carries the recognition itself.
     pub(super) agent_servable: bool,
+    /// Whether the user picked this row's type from the dropdown this session.
+    /// A chosen row saves as its arm; an untouched one may fall back to the key
+    /// table, because `Text` alone cannot say what the row used to be.
+    pub(super) chosen: bool,
 }
 
 impl FormField {
@@ -188,6 +215,7 @@ impl FormField {
             textarea_state: None,
             touched: false,
             agent_servable: false,
+            chosen: false,
         }
     }
 
