@@ -245,6 +245,12 @@ mod test;
 | `integration` | All tests - lower parallelism, one retry for flaky cases |
 | `ci` | Full suite for CI - no retries, JUnit XML output |
 
+Test-gate invocations in specs, dev lanes, CI and hooks use cargo nextest — never
+cargo test, not even as a first pass; the default and .#ci nix shells both provide
+cargo-nextest; a missing runner fails the gate loudly instead of degrading.
+Verification probes of nix shells must pass --ignore-environment (ambient PATH
+pollution masks missing tools).
+
 ### No test-only code in production
 
 **`#[cfg(test)]` on a `fn` or on an `impl` block in a production file is banned.**

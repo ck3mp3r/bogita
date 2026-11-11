@@ -23,4 +23,13 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Run tests in Nix CI shell
-        run: nix develop .#ci --command cargo test --workspace
+        run: nix develop .#ci --command cargo nextest run --workspace --features integration --profile ci
+
+      - name: Upload the nextest JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit
+          # nextest resolves the configured junit path under its profile store.
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
