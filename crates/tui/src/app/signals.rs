@@ -48,13 +48,6 @@ pub fn termination_requested() -> bool {
     TERMINATION_REQUESTED.load(Ordering::SeqCst)
 }
 
-/// Clear the recorded request. Production code quits on the first true read;
-/// the tests need a clean flag to prove each signal on its own.
-#[cfg(test)]
-pub(crate) fn reset() {
-    TERMINATION_REQUESTED.store(false, Ordering::SeqCst);
-}
-
 /// Signal handler: record the request and return.
 extern "C" fn record_termination(_signal: libc::c_int) {
     TERMINATION_REQUESTED.store(true, Ordering::SeqCst);

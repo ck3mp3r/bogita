@@ -24,24 +24,52 @@ fn install_reports_an_invalid_signal() {
 }
 
 #[test]
-fn every_termination_signal_is_recorded() -> Result<()> {
+fn sigint_is_recorded() -> Result<()> {
     // -- Setup & Fixtures
     signals::install()?;
 
     // -- Exec & Check
-    for signal in [libc::SIGINT, libc::SIGHUP, libc::SIGTERM] {
-        signals::reset();
-        // SAFETY: `raise` delivers `signal` to the calling thread; the installed
-        // handler only stores into the atomic flag, which is async-signal-safe.
-        let raised = unsafe { libc::raise(signal) };
-        assert_eq!(raised, 0, "raise({signal}) should succeed");
-        assert!(
-            signals::termination_requested(),
-            "signal {signal} should be recorded"
-        );
-    }
+    // SAFETY: `raise` delivers SIGINT to the calling thread; the installed
+    // handler only stores into the atomic flag, which is async-signal-safe.
+    let raised = unsafe { libc::raise(libc::SIGINT) };
+    assert_eq!(raised, 0, "raise(SIGINT) should succeed");
+    assert!(
+        signals::termination_requested(),
+        "SIGINT should be recorded"
+    );
+    Ok(())
+}
 
-    // -- Cleanup
-    signals::reset();
+#[test]
+fn sighup_is_recorded() -> Result<()> {
+    // -- Setup & Fixtures
+    signals::install()?;
+
+    // -- Exec & Check
+    // SAFETY: `raise` delivers SIGHUP to the calling thread; the installed
+    // handler only stores into the atomic flag, which is async-signal-safe.
+    let raised = unsafe { libc::raise(libc::SIGHUP) };
+    assert_eq!(raised, 0, "raise(SIGHUP) should succeed");
+    assert!(
+        signals::termination_requested(),
+        "SIGHUP should be recorded"
+    );
+    Ok(())
+}
+
+#[test]
+fn sigterm_is_recorded() -> Result<()> {
+    // -- Setup & Fixtures
+    signals::install()?;
+
+    // -- Exec & Check
+    // SAFETY: `raise` delivers SIGTERM to the calling thread; the installed
+    // handler only stores into the atomic flag, which is async-signal-safe.
+    let raised = unsafe { libc::raise(libc::SIGTERM) };
+    assert_eq!(raised, 0, "raise(SIGTERM) should succeed");
+    assert!(
+        signals::termination_requested(),
+        "SIGTERM should be recorded"
+    );
     Ok(())
 }
