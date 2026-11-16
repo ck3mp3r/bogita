@@ -34,7 +34,7 @@ rand = "0.10"
 totp-lite = "2"
 ssh-key = { version = "0.6", features = ["ed25519", "rsa", "rand_core"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }
-signature = "2"
+signature = "3"
 ssh-agent-lib = "0.6"
 libc = "0.2"
 data-encoding = "2"
